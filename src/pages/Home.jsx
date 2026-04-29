@@ -135,7 +135,7 @@ const Home = () => {
     { icon: Users, value: 250, suffix: "+", label: "Patients Healed" },
     { icon: Award, value: 2, suffix: "+", label: "Years Expertise" },
     { icon: TrendingUp, value: 98, suffix: "%", label: "Success Rate" },
-    { icon: Shield, value: 50, suffix: "+", label: "Natural Remedies" },
+    { icon: Shield, value: 4000, suffix: "+", label: "Natural Remedies" },
   ];
 
   const services = [
@@ -247,7 +247,7 @@ const Home = () => {
     {
       icon: Phone,
       title: "Contact",
-      lines: ["+1 (234) 567-890", "dr.jane@harmonyhomeo.com"],
+      lines: ["+91 9360612375", "selakkiya1326@gmail.com"],
     },
   ];
 
@@ -520,7 +520,7 @@ const Home = () => {
 
                 <div className="flex gap-3">
                   <a
-                    href="tel:+12345678900"
+                    href="+91 9360612375"
                     className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-white/10 text-white text-sm font-semibold hover:bg-white/8 transition"
                   >
                     <Phone size={13} /> Call
@@ -735,7 +735,7 @@ const Home = () => {
                 />
               </Link>
               <a
-                href="tel:+12345678900"
+                href="tel:+91 9360612375"
                 className="inline-flex items-center gap-3 border border-white/10 hover:border-white/20 bg-white/5 hover:bg-white/10 text-white font-semibold px-7 py-3.5 rounded-xl transition-all duration-300 text-[15px]"
               >
                 <Phone size={16} />
@@ -941,7 +941,7 @@ const Home = () => {
               />
             </Link>
             <a
-              href="tel:+12345678900"
+              href="tel:+91 9360612375"
               className="inline-flex items-center gap-3 border border-white/10 hover:border-white/20 bg-white/5 hover:bg-white/10 text-white font-semibold px-10 py-4 rounded-xl transition-all duration-300 text-[15px]"
             >
               <Phone size={17} />

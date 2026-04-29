@@ -59,7 +59,7 @@ const Footer = () => {
             <div className="flex items-center space-x-2">
               <div className="w-10 h-10 bg-gradient-to-br from-green-400 to-green-600 rounded-lg flex items-center justify-center shadow-lg">
                 <img
-                  src="/src/assests/logo.png"
+                  src="/logo.png"
                   alt="Clinic Logo"
                   className="w-[28px] h-[28px] object-contain"
                 />
