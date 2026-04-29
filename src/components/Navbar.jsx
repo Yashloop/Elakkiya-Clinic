@@ -104,7 +104,7 @@ const Navbar = ({ isAdmin }) => {
             <Link to="/" className="flex items-center space-x-2 sm:space-x-3">
               <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center shadow-md p-1">
                 <img
-                  src="/logo.png"
+                  src="/public/logo.png"
                   alt="Clinic Logo"
                   className="w-full h-full object-contain"
                 />
