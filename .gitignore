@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+*.log
+.DS_Store
+
+# Vite
+dist/
+.env
+.env.local
+.env.[a-zA-Z0-9_]+
+.env.*.local
+
+# Firebase
+firebase-debug.log
+firebase-debug.*.log
+.firebaserc
+**.pem
+
+# VS Code
+.vscode/settings.json
+.vscode/launch.json
+
+# OS
+Thumbs.db
+ehthumbs.db
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Package lockfiles (optional - npm ci prefers package-lock.json)
+# package-lock.json
+
+# Build artifacts
+build/
+
+# Local env files
+*.local

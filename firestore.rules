@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Appointments: anyone can create (book) and read
+    match /appointments/{document} {
+      allow create, read: if true;
+      allow update, delete: if request.auth != null;
+    }
+
+    // Slots: anyone can read; anyone can update ONLY the 'available' field (booking/unbooking)
+    // Only authenticated admins can create or delete slots
+    match /slots/{document} {
+      allow read: if true;
+      // Allow update only when ONLY the 'available' field is changed (prevents tampering with date/time)
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['available']);
+      allow create, delete: if request.auth != null;
+    }
+  }
+}
+
