@@ -35,14 +35,15 @@ const Navbar = ({ isAdmin }) => {
 
   const handleNavClick = useCallback(
     (href, e) => {
+      // Always close mobile menu first
+      setIsOpen(false);
+      
       if (href.startsWith("/#") && location.pathname === "/") {
         e.preventDefault();
         const hash = href.slice(1); // remove '/'
-        scrollToHash(hash);
+        setTimeout(() => scrollToHash(hash), 50);
         return false;
       }
-      // Close mobile menu for non-hash links
-      setIsOpen(false);
     },
     [location.pathname, scrollToHash],
   );
@@ -104,7 +105,7 @@ const Navbar = ({ isAdmin }) => {
             <Link to="/" className="flex items-center space-x-2 sm:space-x-3">
               <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center shadow-md p-1">
                 <img
-                  src="/public/logo.png"
+                  src="/logo.png"
                   alt="Clinic Logo"
                   className="w-full h-full object-contain"
                 />
