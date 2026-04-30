@@ -486,7 +486,7 @@ const Home = () => {
               {/* Doctor info */}
               <div className="px-7 pt-4 pb-6">
                 <h3 className="text-white font-black text-[19px]">
-                  Dr.S.Elakkiya
+                  Dr. S. Elakkiya
                 </h3>
                 <p className="text-emerald-400 text-[10px] font-bold tracking-widest uppercase mt-0.5 mb-5">
                   Homoeopathy · BHMS
@@ -925,7 +925,7 @@ const Home = () => {
             </span>
           </h2>
           <p className="text-slate-400 text-[17px] mb-12 leading-relaxed">
-            Consult with Dr. Jane Smith — a certified homeopathic physician
+            Consult with Dr. S. Elakkiya — a certified homeopathic physician
             dedicated to your long-term health. Your first consultation is free.
           </p>
           <div className="flex flex-wrap justify-center gap-4">
