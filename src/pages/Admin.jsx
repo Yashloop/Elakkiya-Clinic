@@ -196,18 +196,123 @@ const Admin = () => {
 
   const handleAddSlot = async (e) => {
     e.preventDefault();
-    if (slots.find((s) => s.date === newSlot.date && s.time === newSlot.time)) {
+    if (
+      slots.find(
+        (s) => s.date === newSlot.date && to12h(s.time) === to12h(newSlot.time),
+      )
+    ) {
       showToast("This slot already exists", "error");
       return;
     }
     setAddingSlot(true);
     try {
-      await addDoc(collection(db, "slots"), { ...newSlot, available: true });
+      // store times in normalized 12-hour format so comparisons are consistent
+      await addDoc(collection(db, "slots"), {
+        date: newSlot.date,
+        time: to12h(newSlot.time),
+        available: true,
+      });
       setNewSlot({ date: "", time: "" });
       await fetchSlots();
       showToast("Slot added successfully");
     } catch {
       showToast("Failed to add slot", "error");
+    } finally {
+      setAddingSlot(false);
+    }
+  };
+
+  const fixedTimes12h = [
+    "10:00 AM",
+    "11:00 AM",
+    "12:00 PM",
+    "1:00 PM",
+    "5:00 PM",
+    "6:00 PM",
+    "7:00 PM",
+    "8:00 PM",
+  ];
+
+  const to12h = (timeStr) => {
+    if (!timeStr) return "";
+    const s = String(timeStr).trim();
+    // already in AM/PM form
+    if (/AM|PM/i.test(s)) return s.replace(/\s+/g, " ");
+    // assume HH:MM (24-hour) -> convert
+    const [hh, mm] = s.split(":");
+    let h = parseInt(hh, 10);
+    const m = mm || "00";
+    const period = h >= 12 ? "PM" : "AM";
+    let h12 = h % 12;
+    if (h12 === 0) h12 = 12;
+    return `${h12}:${m} ${period}`;
+  };
+
+  const [slotDayTabDate, setSlotDayTabDate] = useState("");
+  const [selectedFixedTimes, setSelectedFixedTimes] = useState([]);
+
+  const openFixedTimesForDate = (date) => {
+    setSlotDayTabDate(date);
+    // preselect only available fixed times
+    const availableFixed = fixedTimes12h.filter((t) =>
+      slots.some((s) => s.date === date && to12h(s.time) === t),
+    );
+    setSelectedFixedTimes(availableFixed);
+  };
+
+  const toggleFixedTime = (t) => {
+    setSelectedFixedTimes((prev) =>
+      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
+    );
+  };
+
+  const selectAllFixedTimes = () => {
+    // Select every fixed timing (admin intent is to create all fixed slots)
+    setSelectedFixedTimes(fixedTimes12h.slice());
+  };
+
+  const clearFixedTimes = () => {
+    setSelectedFixedTimes([]);
+  };
+
+  const handleCreateFixedSlots = async () => {
+    if (!slotDayTabDate) {
+      showToast("Select a date first", "error");
+      return;
+    }
+    if (!selectedFixedTimes.length) {
+      showToast("Select at least one timing", "error");
+      return;
+    }
+
+    setAddingSlot(true);
+    try {
+      // Create missing slot docs for each selected time
+      // (If the slot already exists, skip.)
+      const existing = new Set(
+        slots
+          .filter((s) => s.date === slotDayTabDate)
+          .map((s) => to12h(s.time)),
+      );
+
+      const toCreate = selectedFixedTimes.filter((t) => !existing.has(t));
+
+      await Promise.all(
+        toCreate.map((t) =>
+          addDoc(collection(db, "slots"), {
+            date: slotDayTabDate,
+            time: t,
+            available: true,
+          }),
+        ),
+      );
+
+      await fetchSlots();
+      setSelectedFixedTimes([]);
+      setSlotDayTabDate("");
+      showToast("Slots created successfully");
+    } catch {
+      showToast("Failed to create slots", "error");
     } finally {
       setAddingSlot(false);
     }
@@ -480,11 +585,11 @@ const Admin = () => {
                               </td>
                               <td className="px-6 py-4">
                                 <p className="font-medium text-gray-800">
-                                  {apt.date}
+                                      {apt.date}
                                 </p>
-                                <p className="text-xs text-gray-400">
-                                  {apt.time}
-                                </p>
+                                    <p className="text-xs text-gray-400">
+                                      {to12h(apt.time)}
+                                    </p>
                               </td>
                               <td className="px-6 py-4">
                                 <p
@@ -575,7 +680,7 @@ const Admin = () => {
                             </span>
                             <span className="flex items-center gap-1.5">
                               <Clock size={12} className="text-orange-400" />
-                              {apt.time}
+                              {to12h(apt.time)}
                             </span>
                             {apt.email && (
                               <span className="flex items-center gap-1.5 col-span-2">
@@ -636,6 +741,124 @@ const Admin = () => {
           >
             {/* Add Slot Form */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+              {/* Fixed timings mass create */}
+              <div className="mb-6 rounded-xl border border-gray-100 bg-gray-50 p-4">
+                <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2 mb-3">
+                  <Clock size={16} className="text-blue-600" />
+                  Create Slots in Bulk (Fixed Timings)
+                </h3>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                      Day
+                    </label>
+                    <input
+                      type="date"
+                      value={slotDayTabDate}
+                      onChange={(e) => {
+                        setSlotDayTabDate(e.target.value);
+                        setSelectedFixedTimes([]);
+                      }}
+                      min={today}
+                      required
+                      className="w-full px-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400 transition"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Ensure click works reliably
+                        if (!slotDayTabDate) {
+                          showToast("Select a date first", "error");
+                          return;
+                        }
+                        openFixedTimesForDate(slotDayTabDate);
+                      }}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold transition"
+                      aria-label="Open Timings"
+                    >
+                      <Calendar size={16} />
+                      OK (Open Timings)
+                    </button>
+                  </div>
+
+                  <div className="sm:col-span-1">
+                    <button
+                      type="button"
+                      onClick={handleCreateFixedSlots}
+                      disabled={addingSlot}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {addingSlot ? (
+                        <Loader className="animate-spin" size={16} />
+                      ) : (
+                        <Plus size={16} />
+                      )}
+                      Create Selected
+                    </button>
+                  </div>
+                </div>
+
+                {slotDayTabDate && (
+                  <div className="mt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                      <p className="text-sm font-semibold text-gray-700">
+                        Select timings
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={selectAllFixedTimes}
+                          className="px-3 py-1.5 rounded-lg bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 text-xs font-semibold"
+                        >
+                          Select All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={clearFixedTimes}
+                          className="px-3 py-1.5 rounded-lg bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 text-xs font-semibold"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {fixedTimes12h.map((t) => {
+                        const selected = selectedFixedTimes.includes(t);
+                        const alreadyExists = slots.some(
+                          (s) => s.date === slotDayTabDate && to12h(s.time) === t,
+                        );
+                        return (
+                          <button
+                            type="button"
+                            key={t}
+                            onClick={() => toggleFixedTime(t)}
+                            className={`p-3 rounded-lg border-2 text-sm font-semibold transition-all ${
+                              selected
+                                ? "bg-green-500 text-white border-green-600 shadow"
+                                : "bg-white text-gray-700 border-gray-300 hover:border-green-400 hover:bg-green-50"
+                            } ${
+                              alreadyExists && !selected ? "opacity-70" : ""
+                            }`}
+                            title={alreadyExists ? "Already exists" : "New"}
+                          >
+                            {t}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <p className="mt-3 text-xs text-gray-600">
+                      Selected: {selectedFixedTimes.join(", ")}
+                    </p>
+                  </div>
+                )}
+              </div>
+
               <h2 className="text-lg font-bold text-gray-800 mb-5 flex items-center gap-2">
                 <span className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center">
                   <Plus className="text-blue-600" size={16} />
@@ -754,7 +977,7 @@ const Admin = () => {
                                     : "text-gray-400"
                                 }
                               />
-                              {slot.time}
+                              {to12h(slot.time)}
                             </div>
                           </div>
                           <span

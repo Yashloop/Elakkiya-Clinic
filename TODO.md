@@ -1,14 +1,9 @@
-# Navbar Auto-Scroll Fix Progress
+# TODO - Multi-slot selection feature
 
-## Plan Steps
+## Plan items
 
-- [x] 1. Add missing section IDs to Home.jsx (about, services, contact)
-- [x] 2. Implement handleNavClick in Navbar.jsx with smooth scroll
-- [x] 3. Update Navbar Links with onClick handler
-- [x] 4. Apply same fix to Footer.jsx quick links
-- [x] 5. Test scrolling on desktop/mobile
-- [x] 6. Verify active states and offsets
-
-## Current Status
-
-✅ All steps complete! Navbar clicks now smoothly auto-scroll to sections (with 100px navbar offset) on both desktop/mobile. Footer links fixed too. Active states work for "/" route.
+- [ ] Update SlotSelector to support fixed 12-hour Indian times + multi-select (Select All, OK)
+- [ ] Update AppointmentForm to submit multiple selected times and create multiple appointments + mark multiple slots unavailable
+- [ ] Update email payload (one email listing all times)
+- [ ] Validate Firestore slot lookup uses the exact `time` string format stored in DB
+- [ ] Run dev/build and smoke test booking flow

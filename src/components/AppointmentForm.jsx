@@ -29,7 +29,8 @@ const AppointmentForm = () => {
     phone: "",
     symptoms: "",
     date: "",
-    time: "",
+    time: "", // legacy (single-slot)
+    times: [], // multi-slot
   });
 
   const [loading, setLoading] = useState(false);
@@ -45,6 +46,82 @@ const AppointmentForm = () => {
   const handleTimeSelect = useCallback((time) => {
     setFormData((prev) => ({ ...prev, time }));
   }, []);
+
+  const bookAppointmentsForTimes = async (times) => {
+    // fail-fast if nothing selected
+    if (!Array.isArray(times) || times.length === 0) {
+      throw new Error("Please select at least one time slot");
+    }
+
+    // Validate each selected time exists and is available
+    // (We also re-check inside transaction for atomicity)
+    const slotsRef = collection(db, "slots");
+
+    // helper to normalize to 12-hour form for comparison
+    const to12h = (timeStr) => {
+      if (!timeStr) return "";
+      const s = String(timeStr).trim();
+      if (/AM|PM/i.test(s)) return s.replace(/\s+/g, " ");
+      const [hh, mm] = s.split(":");
+      let h = parseInt(hh, 10);
+      const m = mm || "00";
+      const period = h >= 12 ? "PM" : "AM";
+      let h12 = h % 12;
+      if (h12 === 0) h12 = 12;
+      return `${h12}:${m} ${period}`;
+    };
+
+    // We’ll collect matching slot doc ids for the provided date+time and available=true
+    const slotDocsByTime = {};
+    // fetch all available slots for the date and map by normalized time
+    const qAll = query(
+      slotsRef,
+      where("date", "==", formData.date),
+      where("available", "==", true),
+    );
+    const snapAll = await getDocs(qAll);
+    const docsByNorm = {};
+    snapAll.forEach((d) => {
+      const data = d.data();
+      docsByNorm[to12h(data.time)] = d.id;
+    });
+
+    for (const t of times) {
+      const docId = docsByNorm[t];
+      if (!docId) {
+        throw new Error(
+          `This time slot (${t}) is no longer available. Please select other slots.`,
+        );
+      }
+      slotDocsByTime[t] = docId;
+    }
+
+    await runTransaction(db, async (transaction) => {
+      // Update all slots in one transaction
+      for (const t of times) {
+        const slotId = slotDocsByTime[t];
+        const slotRef = doc(db, "slots", slotId);
+        const slotSnap = await transaction.get(slotRef);
+        if (!slotSnap.exists()) throw new Error("Slot no longer exists");
+        const slotData = slotSnap.data();
+        if (!slotData.available) throw new Error("Slot already booked");
+        transaction.update(slotRef, { available: false });
+
+        const appointmentRef = doc(collection(db, "appointments"));
+        transaction.set(appointmentRef, {
+          name: formData.name,
+          email: formData.email,
+          age: parseInt(formData.age),
+          phone: formData.phone,
+          symptoms: formData.symptoms || "Not specified",
+          date: formData.date,
+          time: t,
+          status: "pending",
+          createdAt: new Date().toISOString(),
+        });
+      }
+    });
+  };
 
   /* ── Send email to clinic ── */
   const sendClinicEmail = async (data) => {
@@ -106,10 +183,15 @@ const AppointmentForm = () => {
       !formData.email ||
       !formData.age ||
       !formData.phone ||
-      !formData.date ||
-      !formData.time
+      !formData.date
     ) {
       setError("Please fill in all required fields");
+      setLoading(false);
+      return;
+    }
+
+    if (!Array.isArray(formData.times) || formData.times.length === 0) {
+      setError("Please select at least one time slot");
       setLoading(false);
       return;
     }
@@ -123,67 +205,19 @@ const AppointmentForm = () => {
     }
 
     try {
-      // Find the slot document ID first (transactions can't use queries)
-      const slotsRef = collection(db, "slots");
-      const q = query(
-        slotsRef,
-        where("date", "==", formData.date),
-        where("time", "==", formData.time),
-        where("available", "==", true),
-      );
-      const snap = await getDocs(q);
-
-      if (snap.empty) {
-        setError(
-          "This time slot is no longer available. Please select another slot.",
-        );
-        setLoading(false);
-        setRefreshKey((k) => k + 1); // refresh slots
-        return;
-      }
-
-      const slotDoc = snap.docs[0];
-      const slotId = slotDoc.id;
-
-      // ── ATOMIC TRANSACTION ──
-      // This guarantees that even if 10 people click simultaneously,
-      // only ONE will succeed. Firestore locks the document during the transaction.
-      await runTransaction(db, async (transaction) => {
-        const slotRef = doc(db, "slots", slotId);
-        const slotSnap = await transaction.get(slotRef);
-
-        if (!slotSnap.exists()) {
-          throw new Error("Slot no longer exists");
-        }
-
-        const slotData = slotSnap.data();
-        if (!slotData.available) {
-          throw new Error("Slot already booked");
-        }
-
-        // 1. Mark slot as unavailable
-        transaction.update(slotRef, { available: false });
-
-        // 2. Create appointment
-        const appointmentRef = doc(collection(db, "appointments"));
-        transaction.set(appointmentRef, {
-          name: formData.name,
-          email: formData.email,
-          age: parseInt(formData.age),
-          phone: formData.phone,
-          symptoms: formData.symptoms || "Not specified",
-          date: formData.date,
-          time: formData.time,
-          status: "pending",
-          createdAt: new Date().toISOString(),
-        });
-      });
+      // ── Multi-slot booking in one submit ──
+      await bookAppointmentsForTimes(formData.times);
 
       // ── Send emails (outside transaction, non-blocking) ──
+      // Keep compatibility with existing email templates expecting a single string in `appointment_time`.
+      const joinedTimes = formData.times.join(", ");
       const appointmentData = {
         ...formData,
+        // email templates will read this field
+        time: joinedTimes,
         symptoms: formData.symptoms || "Not specified",
       };
+
       await Promise.all([
         sendClinicEmail(appointmentData),
         sendPatientEmail(appointmentData),
@@ -410,11 +444,11 @@ const AppointmentForm = () => {
         {/* Time Slot Selector */}
         <SlotSelector
           selectedDate={formData.date}
-          selectedTime={formData.time}
-          onTimeSelect={handleTimeSelect}
+          selectedTimes={formData.times}
+          onTimesSelect={(times) => setFormData((prev) => ({ ...prev, times }))}
           refreshKey={refreshKey}
+          singleSelect={true}
         />
-
         {/* Submit Button */}
         <button
           type="submit"
