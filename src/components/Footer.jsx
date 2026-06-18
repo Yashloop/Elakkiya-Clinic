@@ -1,6 +1,13 @@
 import React, { useCallback } from "react";
 import { Link } from "react-router-dom";
-import { Mail, Phone, MapPin, Clock, Heart, ArrowUp } from "lucide-react";
+import {
+  Mail,
+  Phone,
+  MapPin,
+  Clock,
+  Heart,
+  ArrowUp,
+} from "lucide-react";
 import { motion } from "framer-motion";
 
 const Footer = () => {
@@ -74,16 +81,38 @@ const Footer = () => {
               worldwide.
             </p>
             <div className="flex space-x-3">
-              {["📘", "📷", "🐦"].map((icon, i) => (
-                <a
-                  key={i}
-                  href="#"
-                  className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center hover:bg-green-500 transition-colors text-lg"
-                  title={["Facebook", "Instagram", "Twitter"][i]}
+              <a
+                href="https://www.instagram.com/elakkiya_homoeo?igsh=MXFkcm1vajc5OWZycg=="
+                target="_blank"
+                rel="noreferrer"
+                className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center hover:bg-pink-500 transition-colors text-white"
+                title="Instagram"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="w-5 h-5"
+                  fill="currentColor"
+                  xmlns="http://www.w3.org/2000/svg"
                 >
-                  {icon}
-                </a>
-              ))}
+                  <path d="M16 3H8C5.24 3 3 5.24 3 8v8c0 2.76 2.24 5 5 5h8c2.76 0 5-2.24 5-5V8c0-2.76-2.24-5-5-5zm3 13c0 1.66-1.34 3-3 3H8c-1.66 0-3-1.34-3-3V8c0-1.66 1.34-3 3-3h8c1.66 0 3 1.34 3 3v8zm-5-11.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm2 2.5a3.5 3.5 0 11-7 0 3.5 3.5 0 017 0zm-3.5.5a2.5 2.5 0 100 5 2.5 2.5 0 000-5z" />
+                </svg>
+              </a>
+              <a
+                href="https://wa.me/919360612375"
+                target="_blank"
+                rel="noreferrer"
+                className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center hover:bg-emerald-500 transition-colors text-white"
+                title="WhatsApp"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="w-5 h-5"
+                  fill="currentColor"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path d="M20.52 3.48A11.93 11.93 0 0012.06 0C5.39 0 .1 5.28.1 11.97c0 2.1.55 4.14 1.6 5.95L0 24l6.27-1.64a11.92 11.92 0 005.79 1.49h.01c6.66 0 11.96-5.29 11.96-11.8 0-3.15-1.23-6.1-3.46-8.07zM12.05 21.55h-.01c-1.85 0-3.65-.5-5.22-1.43l-.37-.22-3.72.97.99-3.62-.24-.37A9.85 9.85 0 012.17 11.97c0-5.37 4.38-9.74 9.75-9.74 2.6 0 5.05 1.01 6.89 2.82a9.7 9.7 0 012.86 6.91c0 5.38-4.27 9.74-9.68 9.74zm5.3-7.35c-.29-.15-1.72-.85-1.99-.94-.27-.1-.47-.15-.67.14-.19.29-.73.94-.9 1.13-.17.19-.34.21-.63.07-.29-.14-1.22-.45-2.33-1.43-.86-.76-1.45-1.7-1.62-1.99-.17-.29-.02-.45.12-.59.13-.13.29-.34.43-.51.14-.17.19-.29.29-.48.1-.19.05-.35-.02-.5-.07-.15-.67-1.62-.92-2.22-.24-.58-.49-.5-.67-.51-.17-.01-.37-.01-.57-.01-.19 0-.5.07-.77.35-.27.28-1.04 1.02-1.04 2.48s1.07 2.87 1.22 3.06c.14.19 2.11 3.22 5.11 4.52.71.31 1.26.5 1.69.64.71.22 1.36.19 1.87.12.57-.08 1.72-.7 1.96-1.38.24-.68.24-1.27.17-1.38-.06-.12-.25-.19-.54-.34z" />
+                </svg>
+              </a>
             </div>
           </motion.div>
 

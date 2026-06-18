@@ -56,7 +56,8 @@ const Review = () => {
     } catch (error) {
       console.error("Review submit error:", error);
       const code = error?.code || "error";
-      const msg = error?.message || "Unable to submit review. Please try again later.";
+      const msg =
+        error?.message || "Unable to submit review. Please try again later.";
       setResult({
         type: "error",
         message: `${code}: ${msg}`,
@@ -81,8 +82,7 @@ const Review = () => {
             </div>
 
             <p className="text-slate-100 text-base leading-relaxed max-w-xl">
-              Your feedback helps us care for more patients. Once submitted, the
-              admin will review and publish it on the home page after approval.
+              Your feedback helps us care for more patients.
             </p>
 
             <div className="mt-10 space-y-4 text-sm text-slate-100">

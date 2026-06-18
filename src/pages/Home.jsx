@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
-import { collection, getDocs, query, where, onSnapshot } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  onSnapshot,
+} from "firebase/firestore";
 import { db } from "../firebase";
 import {
   Calendar,
@@ -259,12 +265,18 @@ const Home = () => {
   useEffect(() => {
     // Use realtime listener for approved reviews but sort client-side to avoid
     // index/field-missing issues on the server query.
-    const q = query(collection(db, "reviews"), where("status", "==", "approved"));
+    const q = query(
+      collection(db, "reviews"),
+      where("status", "==", "approved"),
+    );
 
     const unsub = onSnapshot(
       q,
       (snapshot) => {
-        const docs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        const docs = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
         // sort by publishedAt (fallback to createdAt) descending
         docs.sort((a, b) => {
           const ta = new Date(a.publishedAt || a.createdAt || 0).getTime();
@@ -282,7 +294,8 @@ const Home = () => {
     return () => unsub();
   }, []);
 
-  const reviewsToShow = approvedReviews.length > 0 ? approvedReviews : testimonials;
+  const reviewsToShow =
+    approvedReviews.length > 0 ? approvedReviews : testimonials;
   const displayedReviews = reviewsToShow.slice(0, visibleReviews);
 
   return (
@@ -877,14 +890,30 @@ const Home = () => {
                   </p>
                   <div className="flex items-center gap-3 border-t border-slate-50 pt-4">
                     <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center text-white text-xs font-black shrink-0">
-                      {r.initials || (r.name ? r.name.split(" ").map(n=>n[0]).slice(0,2).join("").toUpperCase() : "P")}
+                      {r.initials ||
+                        (r.name
+                          ? r.name
+                              .split(" ")
+                              .map((n) => n[0])
+                              .slice(0, 2)
+                              .join("")
+                              .toUpperCase()
+                          : "P")}
                     </div>
                     <div className="flex-1">
-                      <p className="text-slate-900 font-bold text-sm">{r.name}</p>
+                      <p className="text-slate-900 font-bold text-sm">
+                        {r.name}
+                      </p>
                       <div className="flex items-center gap-3">
-                        <p className="text-emerald-600 text-xs font-semibold">{r.condition}</p>
+                        <p className="text-emerald-600 text-xs font-semibold">
+                          {r.condition}
+                        </p>
                         {(r.publishedAt || r.createdAt) && (
-                          <p className="text-gray-400 text-xs">{new Date(r.publishedAt || r.createdAt).toLocaleDateString()}</p>
+                          <p className="text-gray-400 text-xs">
+                            {new Date(
+                              r.publishedAt || r.createdAt,
+                            ).toLocaleDateString()}
+                          </p>
                         )}
                       </div>
                     </div>

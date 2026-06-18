@@ -204,10 +204,15 @@ const Admin = () => {
   const handleApproveReview = async (id) => {
     try {
       const publishedAt = new Date().toISOString();
-      await updateDoc(doc(db, "reviews", id), { status: "approved", publishedAt });
+      await updateDoc(doc(db, "reviews", id), {
+        status: "approved",
+        publishedAt,
+      });
       setReviews((prev) =>
         prev.map((review) =>
-          review.id === id ? { ...review, status: "approved", publishedAt } : review,
+          review.id === id
+            ? { ...review, status: "approved", publishedAt }
+            : review,
         ),
       );
       showToast("Review approved and published");
