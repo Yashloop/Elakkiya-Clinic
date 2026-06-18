@@ -37,7 +37,7 @@ const Navbar = ({ isAdmin }) => {
     (href, e) => {
       // Always close mobile menu first
       setIsOpen(false);
-      
+
       if (href.startsWith("/#") && location.pathname === "/") {
         e.preventDefault();
         const hash = href.slice(1); // remove '/'
@@ -75,6 +75,7 @@ const Navbar = ({ isAdmin }) => {
     { label: "About", href: "/#about" },
     { label: "Services", href: "/#services" },
     { label: "Testimonials", href: "/#testimonials" },
+    { label: "Add Review", href: "/review" },
     { label: "Contact", href: "/#contact" },
   ];
 

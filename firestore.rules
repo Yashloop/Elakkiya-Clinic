@@ -16,6 +16,13 @@ service cloud.firestore {
       allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['available']);
       allow create, delete: if request.auth != null;
     }
+
+    // Reviews: anyone can submit and anyone can read approved review content.
+    match /reviews/{document} {
+      allow create: if true;
+      allow read: if true;
+      allow update, delete: if request.auth != null;
+    }
   }
 }
 

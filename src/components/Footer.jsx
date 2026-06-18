@@ -102,6 +102,7 @@ const Footer = () => {
                 { label: "About Us", href: "/#about" },
                 { label: "Our Services", href: "/#services" },
                 { label: "Testimonials", href: "/#testimonials" },
+                { label: "Add Review", href: "/review" },
                 { label: "Book Appointment", href: "/appointment" },
                 { label: "Contact", href: "/#contact" },
               ].map((link) => (

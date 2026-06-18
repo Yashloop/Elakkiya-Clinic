@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
+import { collection, getDocs, query, where, onSnapshot } from "firebase/firestore";
+import { db } from "../firebase";
 import {
   Calendar,
   Phone,
@@ -231,6 +233,9 @@ const Home = () => {
     "250+ Successful Cases",
   ];
 
+  const [approvedReviews, setApprovedReviews] = useState([]);
+  const [visibleReviews, setVisibleReviews] = useState(5);
+
   const contactItems = [
     {
       icon: MapPin,
@@ -250,6 +255,35 @@ const Home = () => {
       lines: ["+91 9360612375", "selakkiya1326@gmail.com"],
     },
   ];
+
+  useEffect(() => {
+    // Use realtime listener for approved reviews but sort client-side to avoid
+    // index/field-missing issues on the server query.
+    const q = query(collection(db, "reviews"), where("status", "==", "approved"));
+
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        const docs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        // sort by publishedAt (fallback to createdAt) descending
+        docs.sort((a, b) => {
+          const ta = new Date(a.publishedAt || a.createdAt || 0).getTime();
+          const tb = new Date(b.publishedAt || b.createdAt || 0).getTime();
+          return tb - ta;
+        });
+        console.log("Approved reviews fetched:", docs.length);
+        setApprovedReviews(docs);
+      },
+      (error) => {
+        console.error("Failed to listen for approved reviews:", error);
+      },
+    );
+
+    return () => unsub();
+  }, []);
+
+  const reviewsToShow = approvedReviews.length > 0 ? approvedReviews : testimonials;
+  const displayedReviews = reviewsToShow.slice(0, visibleReviews);
 
   return (
     <div className="min-h-screen bg-white overflow-x-hidden">
@@ -352,6 +386,13 @@ const Home = () => {
                   size={15}
                   className="group-hover:translate-x-1 transition-transform duration-300"
                 />
+              </Link>
+              <Link
+                to="/review"
+                className="inline-flex items-center gap-3 bg-white/10 hover:bg-white/20 text-white font-semibold px-8 py-4 rounded-xl transition-all duration-300 text-[15px]"
+              >
+                <Star size={17} />
+                Share Your Review
               </Link>
               <a
                 href="tel:+91 9360612375"
@@ -765,7 +806,8 @@ const Home = () => {
                   {
                     icon: MapPin,
                     label: "Address",
-                    value: "15, M C Gurunathan St, Velayutham Street, Thavittupalayam, Anthiyur, Tamil Nadu 638501",
+                    value:
+                      "15, M C Gurunathan St, Velayutham Street, Thavittupalayam, Anthiyur, Tamil Nadu 638501",
                   },
                   {
                     icon: Clock,
@@ -803,19 +845,22 @@ const Home = () => {
       <section id="testimonials" className="bg-white py-28 px-6">
         <div className="max-w-6xl mx-auto">
           <FadeUp className="mb-16 text-center">
-            <Eyebrow>Patient Stories</Eyebrow>
+            <Eyebrow>Patient Reviews</Eyebrow>
             <h2 className="text-slate-900 font-black text-4xl md:text-5xl mb-4">
-              Heard from our patients
+              {approvedReviews.length > 0
+                ? "Verified reviews from our patients"
+                : "Heard from our patients"}
             </h2>
             <p className="text-slate-400 text-lg max-w-lg mx-auto">
-              Real stories from real people who transformed their health with
-              natural care.
+              {approvedReviews.length > 0
+                ? "These reviews are approved by our admin team and shared on the home page."
+                : "Real stories from real people who transformed their health with natural care."}
             </p>
           </FadeUp>
 
           <div className="grid md:grid-cols-3 gap-6">
-            {testimonials.map((t, i) => (
-              <FadeUp key={t.name} delay={i * 0.1}>
+            {displayedReviews.map((r, i) => (
+              <FadeUp key={r.id || r.name || i} delay={i * 0.1}>
                 <div className="group rounded-2xl p-8 border border-slate-100 hover:border-emerald-100 bg-white hover:shadow-xl hover:-translate-y-1 transition-all duration-300 h-full flex flex-col relative">
                   <Quote
                     size={34}
@@ -823,29 +868,41 @@ const Home = () => {
                     strokeWidth={1}
                   />
                   <div className="flex gap-1 mb-6">
-                    {[...Array(t.rating)].map((_, j) => (
+                    {[...Array(r.rating || 5)].map((_, j) => (
                       <Star key={j} size={14} fill="#10b981" stroke="none" />
                     ))}
                   </div>
-                  <p className="text-slate-600 text-[15px] leading-[1.75] flex-1 mb-8">
-                    "{t.text}"
+                  <p className="text-slate-600 text-[15px] leading-[1.75] flex-1 mb-4">
+                    "{r.text || r.message}"
                   </p>
-                  <div className="flex items-center gap-3 border-t border-slate-50 pt-6">
+                  <div className="flex items-center gap-3 border-t border-slate-50 pt-4">
                     <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center text-white text-xs font-black shrink-0">
-                      {t.initials}
+                      {r.initials || (r.name ? r.name.split(" ").map(n=>n[0]).slice(0,2).join("").toUpperCase() : "P")}
                     </div>
-                    <div>
-                      <p className="text-slate-900 font-bold text-sm">
-                        {t.name}
-                      </p>
-                      <p className="text-emerald-600 text-xs font-semibold">
-                        {t.condition}
-                      </p>
+                    <div className="flex-1">
+                      <p className="text-slate-900 font-bold text-sm">{r.name}</p>
+                      <div className="flex items-center gap-3">
+                        <p className="text-emerald-600 text-xs font-semibold">{r.condition}</p>
+                        {(r.publishedAt || r.createdAt) && (
+                          <p className="text-gray-400 text-xs">{new Date(r.publishedAt || r.createdAt).toLocaleDateString()}</p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
               </FadeUp>
             ))}
+          </div>
+
+          <div className="mt-6 text-center">
+            {visibleReviews < reviewsToShow.length && (
+              <button
+                onClick={() => setVisibleReviews((v) => v + 5)}
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition"
+              >
+                Load more reviews
+              </button>
+            )}
           </div>
         </div>
       </section>

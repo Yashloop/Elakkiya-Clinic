@@ -90,6 +90,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }) => (
 const Admin = () => {
   const [appointments, setAppointments] = useState([]);
   const [slots, setSlots] = useState([]);
+  const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("appointments");
   const [searchTerm, setSearchTerm] = useState("");
@@ -116,7 +117,7 @@ const Admin = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      await Promise.all([fetchAppointments(), fetchSlots()]);
+      await Promise.all([fetchAppointments(), fetchSlots(), fetchReviews()]);
     } catch (err) {
       console.error(err);
     } finally {
@@ -134,6 +135,12 @@ const Admin = () => {
     const q = query(collection(db, "slots"), orderBy("date", "asc"));
     const snap = await getDocs(q);
     setSlots(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+  };
+
+  const fetchReviews = async () => {
+    const q = query(collection(db, "reviews"), orderBy("createdAt", "desc"));
+    const snap = await getDocs(q);
+    setReviews(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
   };
 
   /* ── Appointment actions ── */
@@ -190,6 +197,35 @@ const Admin = () => {
         showToast("Slot deleted");
       } catch {
         showToast("Failed to delete slot", "error");
+      }
+    });
+  };
+
+  const handleApproveReview = async (id) => {
+    try {
+      const publishedAt = new Date().toISOString();
+      await updateDoc(doc(db, "reviews", id), { status: "approved", publishedAt });
+      setReviews((prev) =>
+        prev.map((review) =>
+          review.id === id ? { ...review, status: "approved", publishedAt } : review,
+        ),
+      );
+      showToast("Review approved and published");
+    } catch (err) {
+      console.error("Approve review error:", err);
+      showToast("Failed to approve review", "error");
+    }
+  };
+
+  const handleDeleteReview = (id) => {
+    askConfirm("Delete this review? This cannot be undone.", async () => {
+      setConfirm(null);
+      try {
+        await deleteDoc(doc(db, "reviews", id));
+        setReviews((prev) => prev.filter((review) => review.id !== id));
+        showToast("Review deleted");
+      } catch {
+        showToast("Failed to delete review", "error");
       }
     });
   };
@@ -343,7 +379,13 @@ const Admin = () => {
       color: "from-amber-500 to-orange-500",
     },
     {
-      label: "Free Slots",
+      label: "Pending Reviews",
+      value: reviews.filter((r) => r.status === "pending").length,
+      icon: "⭐",
+      color: "from-yellow-400 to-orange-500",
+    },
+    {
+      label: "Open Slots",
       value: slots.filter((s) => s.available).length,
       icon: "✅",
       color: "from-emerald-500 to-teal-500",
@@ -418,7 +460,7 @@ const Admin = () => {
                   Admin Dashboard
                 </h1>
                 <p className="text-white/70 text-sm mt-1">
-                  Manage appointments &amp; available time slots
+                  Manage appointments, slots, and patient reviews
                 </p>
               </div>
               <button
@@ -448,7 +490,7 @@ const Admin = () => {
 
           {/* Tab bar inside header */}
           <div className="flex border-t border-white/10">
-            {["appointments", "slots"].map((tab) => (
+            {["appointments", "slots", "reviews"].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -458,7 +500,11 @@ const Admin = () => {
                     : "text-white/50 hover:text-white/80"
                 }`}
               >
-                {tab === "appointments" ? "📋 Appointments" : "⏰ Manage Slots"}
+                {tab === "appointments"
+                  ? "📋 Appointments"
+                  : tab === "slots"
+                    ? "⏰ Manage Slots"
+                    : "⭐ Reviews"}
               </button>
             ))}
           </div>
@@ -585,11 +631,11 @@ const Admin = () => {
                               </td>
                               <td className="px-6 py-4">
                                 <p className="font-medium text-gray-800">
-                                      {apt.date}
+                                  {apt.date}
                                 </p>
-                                    <p className="text-xs text-gray-400">
-                                      {to12h(apt.time)}
-                                    </p>
+                                <p className="text-xs text-gray-400">
+                                  {to12h(apt.time)}
+                                </p>
                               </td>
                               <td className="px-6 py-4">
                                 <p
@@ -830,7 +876,8 @@ const Admin = () => {
                       {fixedTimes12h.map((t) => {
                         const selected = selectedFixedTimes.includes(t);
                         const alreadyExists = slots.some(
-                          (s) => s.date === slotDayTabDate && to12h(s.time) === t,
+                          (s) =>
+                            s.date === slotDayTabDate && to12h(s.time) === t,
                         );
                         return (
                           <button
@@ -1022,6 +1069,121 @@ const Admin = () => {
                       </motion.div>
                     ))}
                   </AnimatePresence>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+
+        {activeTab === "reviews" && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="space-y-6"
+          >
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-5">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">
+                    Patient Reviews
+                  </h2>
+                  <p className="text-sm text-gray-500">
+                    Approve patient feedback before it appears on the home page.
+                  </p>
+                </div>
+                <div className="text-sm text-gray-600">
+                  Total: {reviews.length} · Approved:{" "}
+                  {reviews.filter((r) => r.status === "approved").length} ·
+                  Pending:{" "}
+                  {reviews.filter((r) => r.status === "pending").length}
+                </div>
+              </div>
+
+              {reviews.filter((r) => r.status === "pending").length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center text-gray-500">
+                  No pending reviews right now. Once patients submit, you can
+                  approve them here.
+                </div>
+              ) : (
+                <div className="grid gap-4">
+                  {reviews
+                    .filter((r) => r.status === "pending")
+                    .map((review) => (
+                      <div
+                        key={review.id}
+                        className="rounded-3xl border border-gray-100 p-5 shadow-sm bg-white"
+                      >
+                        <div className="flex items-start justify-between gap-4 mb-4">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-800">
+                              {review.name}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              {review.condition || "General"}
+                            </p>
+                          </div>
+                          <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 text-yellow-700 px-3 py-1 text-[11px] font-semibold uppercase">
+                            {review.rating} / 5
+                          </span>
+                        </div>
+                        <p className="text-gray-700 leading-relaxed mb-4">
+                          {review.message}
+                        </p>
+                        <div className="flex flex-wrap gap-3">
+                          <button
+                            onClick={() => handleApproveReview(review.id)}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 text-white px-4 py-2 text-sm font-semibold hover:bg-emerald-600 transition"
+                          >
+                            <CheckCircle size={16} /> Approve
+                          </button>
+                          <button
+                            onClick={() => handleDeleteReview(review.id)}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-100 text-red-600 px-4 py-2 text-sm font-semibold hover:bg-red-200 transition"
+                          >
+                            <Trash2 size={16} /> Delete
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+              <h3 className="text-lg font-bold text-gray-900 mb-4">
+                Approved Reviews
+              </h3>
+              {reviews.filter((r) => r.status === "approved").length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center text-gray-500">
+                  No approved reviews have been published yet.
+                </div>
+              ) : (
+                <div className="grid gap-4">
+                  {reviews
+                    .filter((r) => r.status === "approved")
+                    .map((review) => (
+                      <div
+                        key={review.id}
+                        className="rounded-3xl border border-gray-100 p-5 bg-gray-50"
+                      >
+                        <div className="flex items-center justify-between gap-4 mb-4">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900">
+                              {review.name}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              {review.condition || "General"}
+                            </p>
+                          </div>
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-700 px-3 py-1 text-[11px] font-semibold uppercase">
+                            {review.rating} / 5
+                          </span>
+                        </div>
+                        <p className="text-gray-700 leading-relaxed">
+                          {review.message}
+                        </p>
+                      </div>
+                    ))}
                 </div>
               )}
             </div>
