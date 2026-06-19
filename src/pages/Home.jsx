@@ -825,7 +825,7 @@ const Home = () => {
                   {
                     icon: Clock,
                     label: "Hours",
-                    value: "Mon–Sun: 10 AM – 1 PM & 5 AM – 7 PM",
+                    value: "Mon–Sun: 10 AM – 1 PM & 5 PM – 7 PM",
                   },
                   { icon: Phone, label: "Phone", value: "+91 9360612375" },
                   {
