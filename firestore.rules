@@ -23,6 +23,19 @@ service cloud.firestore {
       allow read: if true;
       allow update, delete: if request.auth != null;
     }
+
+    // Stock: admin-only. Existing medicine records, quantities, and settings.
+    match /stock/{document} {
+      allow read, create, update, delete: if request.auth != null;
+    }
+
+    match /stockHistory/{document} {
+      allow read, create, update, delete: if request.auth != null;
+    }
+
+    match /stockSettings/{document} {
+      allow read, create, update, delete: if request.auth != null;
+    }
   }
 }
 

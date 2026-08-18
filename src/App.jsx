@@ -19,6 +19,9 @@ import Appointment from "./pages/Appointment";
 import Review from "./pages/Review";
 import Login from "./pages/Login";
 import Admin from "./pages/Admin";
+import StockManagement from "./pages/StockManagement";
+import StockEdit from "./pages/StockEdit";
+import StockHistory from "./pages/StockHistory";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -61,6 +64,30 @@ function AppContent() {
             element={
               <ProtectedRoute>
                 <Admin />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/stock"
+            element={
+              <ProtectedRoute>
+                <StockManagement />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/stock/edit/:id"
+            element={
+              <ProtectedRoute>
+                <StockEdit />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/stock/history/:id"
+            element={
+              <ProtectedRoute>
+                <StockHistory />
               </ProtectedRoute>
             }
           />

@@ -148,12 +148,34 @@ const Navbar = ({ isAdmin }) => {
               ))}
 
               {isAdmin ? (
-                <button
-                  onClick={handleLogout}
-                  className="bg-red-500 text-white px-5 py-2 rounded-full font-medium hover:bg-red-600 transition-all transform hover:scale-105 shadow-md text-sm"
-                >
-                  Logout
-                </button>
+                <>
+                  <Link
+                    to="/admin"
+                    className={`relative font-medium transition-colors ${
+                      location.pathname === "/admin"
+                        ? "text-green-600"
+                        : "text-gray-700 hover:text-green-600"
+                    }`}
+                  >
+                    Dashboard
+                  </Link>
+                  <Link
+                    to="/admin/stock"
+                    className={`relative font-medium transition-colors ${
+                      location.pathname.startsWith("/admin/stock")
+                        ? "text-green-600"
+                        : "text-gray-700 hover:text-green-600"
+                    }`}
+                  >
+                    Stock Details
+                  </Link>
+                  <button
+                    onClick={handleLogout}
+                    className="bg-red-500 text-white px-5 py-2 rounded-full font-medium hover:bg-red-600 transition-all transform hover:scale-105 shadow-md text-sm"
+                  >
+                    Logout
+                  </button>
+                </>
               ) : (
                 <Link
                   to="/appointment"
@@ -211,17 +233,33 @@ const Navbar = ({ isAdmin }) => {
                   </Link>
                 ))}
 
-                <div className="pt-4 border-t border-gray-100 mt-2">
+                <div className="pt-4 border-t border-gray-100 mt-2 space-y-2">
                   {isAdmin ? (
-                    <button
-                      onClick={() => {
-                        setIsOpen(false);
-                        handleLogout();
-                      }}
-                      className="w-full bg-red-500 text-white py-3 rounded-xl font-medium hover:bg-red-600 transition-all text-center"
-                    >
-                      Logout
-                    </button>
+                    <>
+                      <Link
+                        to="/admin"
+                        onClick={() => setIsOpen(false)}
+                        className="block w-full text-center bg-teal-50 text-teal-800 py-3 rounded-xl font-medium"
+                      >
+                        Dashboard
+                      </Link>
+                      <Link
+                        to="/admin/stock"
+                        onClick={() => setIsOpen(false)}
+                        className="block w-full text-center bg-emerald-50 text-emerald-800 py-3 rounded-xl font-medium"
+                      >
+                        📦 Stock Details
+                      </Link>
+                      <button
+                        onClick={() => {
+                          setIsOpen(false);
+                          handleLogout();
+                        }}
+                        className="w-full bg-red-500 text-white py-3 rounded-xl font-medium hover:bg-red-600 transition-all text-center"
+                      >
+                        Logout
+                      </button>
+                    </>
                   ) : (
                     <Link
                       to="/appointment"

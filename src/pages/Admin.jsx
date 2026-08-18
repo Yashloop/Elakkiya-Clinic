@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   collection,
   getDocs,
@@ -88,6 +89,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }) => (
    Main Admin Component
 ───────────────────────────────────────────── */
 const Admin = () => {
+  const navigate = useNavigate();
   const [appointments, setAppointments] = useState([]);
   const [slots, setSlots] = useState([]);
   const [reviews, setReviews] = useState([]);
@@ -465,16 +467,24 @@ const Admin = () => {
                   Admin Dashboard
                 </h1>
                 <p className="text-white/70 text-sm mt-1">
-                  Manage appointments, slots, and patient reviews
+                  Manage appointments, slots, reviews, and stock details
                 </p>
               </div>
-              <button
-                onClick={fetchData}
-                className="flex items-center gap-2 bg-white/10 hover:bg-white/20 transition-colors text-white text-sm font-medium px-4 py-2 rounded-xl border border-white/20"
-              >
-                <RefreshCw size={15} />
-                Refresh
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => navigate("/admin/stock")}
+                  className="flex items-center gap-2 bg-white text-teal-800 hover:bg-teal-50 transition-colors text-sm font-semibold px-4 py-2 rounded-xl shadow-sm"
+                >
+                  📦 Stock Details
+                </button>
+                <button
+                  onClick={fetchData}
+                  className="flex items-center gap-2 bg-white/10 hover:bg-white/20 transition-colors text-white text-sm font-medium px-4 py-2 rounded-xl border border-white/20"
+                >
+                  <RefreshCw size={15} />
+                  Refresh
+                </button>
+              </div>
             </div>
 
             <div className="mt-6 grid grid-cols-3 gap-3">
@@ -492,6 +502,21 @@ const Admin = () => {
               ))}
             </div>
           </div>
+
+          <button
+            onClick={() => navigate("/admin/stock")}
+            className="mx-6 mb-5 flex items-center justify-between gap-4 rounded-2xl bg-white/10 hover:bg-white/20 border border-white/15 px-5 py-4 text-left transition"
+          >
+            <div>
+              <p className="text-white font-semibold">📦 Stock Details</p>
+              <p className="text-white/70 text-sm mt-0.5">
+                Open the stock overview, update quantities, and filter low-stock medicines
+              </p>
+            </div>
+            <span className="hidden sm:inline text-white/80 text-sm font-medium">
+              Open →
+            </span>
+          </button>
 
           {/* Tab bar inside header */}
           <div className="flex border-t border-white/10">
