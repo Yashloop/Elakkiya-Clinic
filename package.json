@@ -19,7 +19,8 @@
     "react-router-dom": "^7.14.2",
     "react-typed": "^2.0.12",
     "tailwind-merge": "3.4.0",
-    "vanilla-tilt": "^1.8.1"
+    "vanilla-tilt": "^1.8.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.17",
