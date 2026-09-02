@@ -41,6 +41,18 @@ export const FILTER_CONDITIONS = [
 
 export const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
+/** Lowercase, punctuation-free key used to match a workbook row to a saved record. */
+export const slugifyName = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+
+/** Normalised remedy name used when merging workbook rows with saved records. */
+export const matchKey = (value) => slugifyName(value);
+
 export const toQty = (value) => {
   if (value === null || value === undefined || value === "") return 0;
   const n = Number(value);
@@ -60,6 +72,7 @@ export const emptyQuantities = () =>
 
 export const expandSeedRow = (row) => {
   const item = {
+    key: row.key || slugifyName(row.name),
     sno: Number(row.sno) || 0,
     section: row.section || "",
     name: row.name || "",
@@ -80,6 +93,7 @@ export const normalizeStockDoc = (id, data = {}) => {
   const name = data.name || "";
   const item = {
     id,
+    key: data.key || slugifyName(name),
     sno: Number(data.sno) || 0,
     section: data.section || "",
     name,
@@ -94,6 +108,58 @@ export const normalizeStockDoc = (id, data = {}) => {
   });
   return item;
 };
+
+/**
+ * Merges the workbook seed into records that are already stored.
+ * Existing quantities (admin edits) always win; remedies that are new in the
+ * workbook are added, and section / S.No. / "repeatedly used" metadata is
+ * refreshed so the app never keeps showing an older workbook.
+ */
+export const mergeSeedRows = (seed = [], existing = []) => {
+  const byKey = new Map();
+  existing.forEach((item) => {
+    const key = item.key || matchKey(item.name);
+    if (key && !byKey.has(key)) byKey.set(key, item);
+  });
+
+  const added = [];
+  const updated = [];
+  const merged = [...existing];
+  const indexById = new Map(merged.map((item, i) => [item.id, i]));
+
+  seed.forEach((seedItem) => {
+    const key = seedItem.key || matchKey(seedItem.name);
+    const current = byKey.get(key);
+
+    if (!current) {
+      added.push(seedItem);
+      merged.push(seedItem);
+      indexById.set(seedItem.id, merged.length - 1);
+      byKey.set(key, seedItem);
+      return;
+    }
+
+    const patch = {};
+    if (seedItem.name && current.name !== seedItem.name) patch.name = seedItem.name;
+    if (seedItem.section && current.section !== seedItem.section) {
+      patch.section = seedItem.section;
+    }
+    if (current.repeatedlyUsed !== seedItem.repeatedlyUsed) {
+      patch.repeatedlyUsed = seedItem.repeatedlyUsed;
+    }
+    if (seedItem.sno && current.sno !== seedItem.sno) patch.sno = seedItem.sno;
+    if (!current.key) patch.key = key;
+    if (!Object.keys(patch).length) return;
+
+    const next = normalizeStockDoc(current.id, { ...current, ...patch });
+    updated.push({ id: current.id, patch, item: next });
+    const i = indexById.get(current.id);
+    if (i !== undefined) merged[i] = next;
+  });
+
+  return { merged, added, updated };
+};
+
 
 export const getMinPositiveQty = (item) => {
   const positives = STOCK_TYPES.map((type) => toQty(item[type.key])).filter(
@@ -316,6 +382,10 @@ export const formatChange = (diff) => {
 };
 
 export const stockDocId = (sno) => `sno-${String(sno).padStart(4, "0")}`;
+
+/** Stable document id derived from the remedy name (workbook S.No. restarts per section). */
+export const seedDocId = (row) =>
+  `rem-${row?.key || slugifyName(row?.name) || String(row?.sno || "")}`;
 
 export const sanitizeQuantity = (value) => {
   if (value === "" || value === null || value === undefined) return 0;
