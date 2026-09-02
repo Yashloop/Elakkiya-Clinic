@@ -4,6 +4,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
@@ -39,6 +40,14 @@ const COLUMN_MAP = {
   Ointments: "ointments",
 };
 
+const slugify = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+
 const wb = XLSX.readFile(sourcePath);
 const sheetName = wb.SheetNames.includes("A-Z") ? "A-Z" : wb.SheetNames[0];
 const grid = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {
@@ -54,11 +63,19 @@ const nameIdx = idx("Remedy");
 const repeatIdx = idx("Repeatadly used") >= 0 ? idx("Repeatadly used") : idx("Repeatedly used");
 
 const rows = [];
+const usedKeys = new Set();
+let skippedBlank = 0;
 let seq = 0;
 for (let r = 1; r < grid.length; r += 1) {
   const row = grid[r] || [];
   const name = String(row[nameIdx] ?? "").trim();
-  if (!name) continue;
+  if (!name) {
+    // Excel row exists (S.No. / Section filled) but has no remedy name -> placeholder row.
+    if (String(row[snoIdx] ?? "").trim() || String(row[sectionIdx] ?? "").trim()) {
+      skippedBlank += 1;
+    }
+    continue;
+  }
   seq += 1;
   const qty = {};
   header.forEach((label, c) => {
@@ -68,9 +85,21 @@ for (let r = 1; r < grid.length; r += 1) {
     if (Number.isFinite(n) && n !== 0) qty[key] = n;
   });
   const sno = Number(row[snoIdx]);
+  const section = String(row[sectionIdx] ?? "").trim() || name[0].toUpperCase();
+
+  // Stable, collision-free key -> used to build the Firestore document id.
+  let key = slugify(name) || `row-${seq}`;
+  if (usedKeys.has(key)) {
+    let n = 2;
+    while (usedKeys.has(`${key}-${n}`)) n += 1;
+    key = `${key}-${n}`;
+  }
+  usedKeys.add(key);
+
   rows.push({
+    key,
     sno: Number.isFinite(sno) && sno > 0 ? sno : seq,
-    section: String(row[sectionIdx] ?? "").trim() || name[0].toUpperCase(),
+    section,
     name,
     qty,
     repeatedlyUsed:
@@ -78,25 +107,33 @@ for (let r = 1; r < grid.length; r += 1) {
   });
 }
 
-// Guarantee unique, stable S.No. values (doc ids are derived from them).
-const seen = new Set();
-let next = 0;
-rows.forEach((row) => {
-  if (seen.has(row.sno)) {
-    while (seen.has(next)) next += 1;
-    row.sno = next;
-  }
-  seen.add(row.sno);
-  next = Math.max(next, row.sno);
-});
+// Signature changes whenever the remedy list (or its metadata) changes, so the
+// app can detect a newer workbook and re-sync records that were already saved.
+const signature = crypto
+  .createHash("sha1")
+  .update(
+    rows
+      .map((r) => `${r.key}|${r.sno}|${r.section}|${r.repeatedlyUsed}`)
+      .join("\n"),
+  )
+  .digest("hex")
+  .slice(0, 16);
 
 const seed = {
-  version: 2,
+  version: 3,
   source: path.basename(sourcePath),
   generatedAt: new Date().toISOString().slice(0, 10),
+  sheetRows: grid.length - 1,
+  skippedBlankRows: skippedBlank,
   count: rows.length,
+  signature,
   rows,
 };
 
 fs.writeFileSync(outPath, `${JSON.stringify(seed)}\n`);
-console.log(`Wrote ${rows.length} rows from "${seed.source}" to ${path.relative(root, outPath)}`);
+console.log(
+  `Wrote ${rows.length} remedies from "${seed.source}" (sheet "${sheetName}") to ${path.relative(root, outPath)}`,
+);
+console.log(
+  `Sheet data rows: ${seed.sheetRows} · skipped rows without a remedy name: ${skippedBlank} · signature: ${signature}`,
+);

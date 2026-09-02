@@ -31,7 +31,9 @@ import {
   exportStockToExcel,
   fetchAllStock,
   fetchStockSettings,
+  resetSeedSync,
   saveStockSettings,
+  seedInfo,
 } from "../utils/stockService";
 import StockTypeSelector from "../components/stock/StockTypeSelector";
 import StockTable from "../components/stock/StockTable";
@@ -125,6 +127,8 @@ const StockManagement = () => {
   const [confirm, setConfirm] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [applyingBulk, setApplyingBulk] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [seedMeta] = useState(() => seedInfo());
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
@@ -140,11 +144,14 @@ const StockManagement = () => {
     });
   };
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async ({ silent = false } = {}) => {
     setLoading(true);
     setError("");
     try {
-      const [{ items: stockItems, seedResult, warning: loadWarning }, settings] =
+      const [
+        { items: stockItems, seedResult, syncResult, warning: loadWarning },
+        settings,
+      ] =
         await Promise.all([
           fetchAllStock((progress) => setSeeding(progress)),
           fetchStockSettings().catch(() => ({
@@ -156,7 +163,13 @@ const StockManagement = () => {
       setThresholdDraft(settings.lowStockThreshold);
       setWarning(loadWarning || settings.warning || "");
       if (seedResult?.seeded) {
-        showToast(`Loaded ${seedResult.count} existing medicine records`);
+        showToast(`Loaded ${seedResult.count} medicine records from ${seedMeta.source}`);
+      } else if (syncResult?.synced) {
+        showToast(
+          `Workbook synced · ${syncResult.added} new, ${syncResult.updated} updated · ${stockItems.length} total`,
+        );
+      } else if (silent) {
+        showToast(`Already up to date with ${seedMeta.source} (${stockItems.length} records)`);
       }
     } catch (err) {
       console.error(err);
@@ -169,11 +182,24 @@ const StockManagement = () => {
       setLoading(false);
       setSeeding(null);
     }
-  }, []);
+  }, [seedMeta.source]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const handleWorkbookSync = async () => {
+    setSyncing(true);
+    try {
+      await resetSeedSync();
+      await loadData({ silent: true });
+    } catch (err) {
+      console.error(err);
+      showToast(err.message || "Workbook sync failed", "error");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     if (location.state?.updatedItem) {
@@ -438,6 +464,15 @@ const StockManagement = () => {
                 <p className="text-white/70 text-sm mt-1">
                   Search, update, filter and audit clinic medicine stock
                 </p>
+                <p className="text-white/50 text-xs mt-1">
+                  Source: {seedMeta.source} · {seedMeta.count.toLocaleString()} remedies
+                  {seedMeta.skippedBlankRows
+                    ? ` (${seedMeta.sheetRows} sheet rows, ${seedMeta.skippedBlankRows} blank)`
+                    : ""}
+                  {stats.total !== seedMeta.count
+                    ? ` · showing ${stats.total.toLocaleString()}`
+                    : ""}
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -448,7 +483,16 @@ const StockManagement = () => {
                   Threshold
                 </button>
                 <button
-                  onClick={loadData}
+                  onClick={handleWorkbookSync}
+                  disabled={syncing}
+                  title={`Re-apply ${seedMeta.source} (${seedMeta.count} remedies)`}
+                  className="flex items-center gap-2 bg-white/10 hover:bg-white/20 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded-xl border border-white/20"
+                >
+                  <RefreshCw size={15} className={syncing ? "animate-spin" : ""} />
+                  {syncing ? "Syncing…" : "Sync workbook"}
+                </button>
+                <button
+                  onClick={() => loadData()}
                   className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white text-sm font-medium px-4 py-2 rounded-xl border border-white/20"
                 >
                   <RefreshCw size={15} />
