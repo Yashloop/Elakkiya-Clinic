@@ -267,7 +267,7 @@ const StockManagement = () => {
     setItems((previous) =>
       previous.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
     );
-    showToast("Changes saved. Your current search and filters were kept.");
+    showToast("Changes saved to Firebase. Your search and filters were kept.");
     navigate(location.pathname, { replace: true, state: null });
   }, [location.pathname, location.state, navigate]);
 
@@ -667,7 +667,7 @@ const StockManagement = () => {
                   >
                     <option value="all">All medicines</option>
                     <option value="yes">YES only</option>
-                    <option value="no">Not YES</option>
+                    <option value="no">NO only</option>
                   </select>
                 </div>
                 <div>

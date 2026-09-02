@@ -91,7 +91,7 @@ const StockHistory = () => {
                 <thead>
                   <tr className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
                     <th className="px-4 py-3 text-left">Date</th>
-                    <th className="px-4 py-3 text-left">Stock Type</th>
+                    <th className="px-4 py-3 text-left">Field / Stock Type</th>
                     <th className="px-4 py-3 text-left">Previous</th>
                     <th className="px-4 py-3 text-left">New</th>
                     <th className="px-4 py-3 text-left">Change</th>
@@ -100,35 +100,45 @@ const StockHistory = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {rows.map((row) => (
-                    <tr key={row.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 text-gray-600">
-                        {formatDateTime(row.createdAt)}
-                      </td>
-                      <td className="px-4 py-3 font-semibold text-gray-800">
-                        {row.columnLabel || row.columnKey}
-                      </td>
-                      <td className="px-4 py-3">{row.previous}</td>
-                      <td className="px-4 py-3">{row.next}</td>
-                      <td
-                        className={`px-4 py-3 font-semibold ${
-                          row.difference > 0
-                            ? "text-emerald-600"
-                            : row.difference < 0
-                              ? "text-red-600"
-                              : "text-gray-500"
-                        }`}
-                      >
-                        {formatChange(row.difference)}
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">
-                        {row.updatedBy || "Admin"}
-                      </td>
-                      <td className="px-4 py-3 capitalize text-gray-500">
-                        {row.source || "edit"}
-                      </td>
-                    </tr>
-                  ))}
+                  {rows.map((row) => {
+                    const fieldChange =
+                      row.changeType === "field" || row.difference === null;
+                    const displayValue = (value) =>
+                      value === "" || value === null || value === undefined
+                        ? "—"
+                        : String(value);
+                    return (
+                      <tr key={row.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-gray-600">
+                          {formatDateTime(row.createdAt)}
+                        </td>
+                        <td className="px-4 py-3 font-semibold text-gray-800">
+                          {row.columnLabel || row.columnKey}
+                        </td>
+                        <td className="px-4 py-3">{displayValue(row.previous)}</td>
+                        <td className="px-4 py-3">{displayValue(row.next)}</td>
+                        <td
+                          className={`px-4 py-3 font-semibold ${
+                            fieldChange
+                              ? "text-teal-700"
+                              : row.difference > 0
+                                ? "text-emerald-600"
+                                : row.difference < 0
+                                  ? "text-red-600"
+                                  : "text-gray-500"
+                          }`}
+                        >
+                          {fieldChange ? "Changed" : formatChange(row.difference)}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600">
+                          {row.updatedBy || "Admin"}
+                        </td>
+                        <td className="px-4 py-3 capitalize text-gray-500">
+                          {row.source || "edit"}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

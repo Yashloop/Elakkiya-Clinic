@@ -7,7 +7,6 @@ import {
   orderBy,
   query,
   setDoc,
-  updateDoc,
   where,
   writeBatch,
 } from "firebase/firestore";
@@ -20,9 +19,11 @@ import {
   STOCK_TYPES,
   expandSeedRow,
   mergeSeedRows,
+  normalizeRepeatedlyUsed,
   normalizeStockDoc,
   seedDocId,
   sanitizeQuantity,
+  sanitizeSerialNumber,
   toQty,
 } from "./stockConstants";
 
@@ -303,7 +304,7 @@ export const fetchAllStock = async (onProgress) => {
       seed: seedInfo(),
       source: "local",
       warning: isPermissionError(error)
-        ? "Firebase stock rules are not deployed yet. Records are loaded from the active workbook and local admin changes. Deploy firestore.rules to save in Firebase."
+        ? "Firebase stock access is blocked. Records are shown from the local cache, but edits will not save until firestore.rules is deployed and you are signed in."
         : error.message,
     };
   }
@@ -346,58 +347,73 @@ const buildHistoryEntry = ({
   next,
   user,
   source = "edit",
-}) => ({
-  id: `${item.id}-${columnKey}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-  stockId: item.id,
-  sno: item.sno,
-  productName: item.name,
-  columnKey,
-  columnLabel,
-  previous: toQty(previous),
-  next: toQty(next),
-  difference: toQty(next) - toQty(previous),
-  updatedBy: adminLabel(user),
-  updatedByUid: user.uid,
-  updatedByEmail: user.email || "",
-  source,
-  createdAt: new Date().toISOString(),
-});
-
-const persistHistory = async (history) => {
-  if (!history.length) return;
-  const local = [...history, ...getLocalHistory()].slice(0, 2000);
-  saveLocalHistory(local);
-  try {
-    for (const group of chunk(history, 400)) {
-      const batch = writeBatch(db);
-      group.forEach((entry) => {
-        const ref = doc(collection(db, STOCK_HISTORY_COLLECTION));
-        const { id, ...data } = entry;
-        batch.set(ref, data);
-      });
-      await batch.commit();
-    }
-  } catch (error) {
-    if (!isPermissionError(error)) throw error;
-  }
+  changeType = "quantity",
+}) => {
+  const isQuantity = changeType === "quantity";
+  return {
+    id: `${item.id}-${columnKey}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    stockId: item.id,
+    sno: item.sno,
+    productName: item.name,
+    columnKey,
+    columnLabel,
+    previous: isQuantity ? toQty(previous) : (previous ?? ""),
+    next: isQuantity ? toQty(next) : (next ?? ""),
+    difference: isQuantity ? toQty(next) - toQty(previous) : null,
+    changeType,
+    updatedBy: adminLabel(user),
+    updatedByUid: user.uid,
+    updatedByEmail: user.email || "",
+    source,
+    createdAt: new Date().toISOString(),
+  };
 };
 
-const persistItemUpdate = async (id, payload) => {
+const firestoreSaveError = (error) => {
+  if (isPermissionError(error)) {
+    const saveError = new Error(
+      "Firebase blocked this update. Confirm that you are signed in and deploy the stock rules from firestore.rules.",
+    );
+    saveError.code = error?.code || "firestore/permission-denied";
+    return saveError;
+  }
+  if (String(error?.code || "").includes("unavailable")) {
+    const saveError = new Error(
+      "Firebase is currently unavailable. Nothing was saved; check your connection and try again.",
+    );
+    saveError.code = error.code;
+    return saveError;
+  }
+  return error;
+};
+
+/**
+ * Saves the edited record and its audit rows in one Firestore batch. Local cache
+ * data is changed only after Firebase confirms the commit, so the UI can never
+ * report a successful save that exists in this browser alone.
+ */
+const persistStockUpdate = async (id, current, payload, history) => {
+  try {
+    const batch = writeBatch(db);
+    batch.set(doc(db, STOCK_COLLECTION, id), payload, { merge: true });
+    history.forEach((entry) => {
+      const { id: historyId, ...data } = entry;
+      batch.set(doc(db, STOCK_HISTORY_COLLECTION, historyId), data);
+    });
+    await batch.commit();
+  } catch (error) {
+    throw firestoreSaveError(error);
+  }
+
+  const updated = normalizeStockDoc(id, { ...current, ...payload });
   const localItems = getLocalItems().map((item) =>
-    item.id === id ? normalizeStockDoc(id, { ...item, ...payload }) : item,
+    item.id === id ? updated : item,
   );
   saveLocalItems(localItems);
-  try {
-    await updateDoc(doc(db, STOCK_COLLECTION, id), payload);
-    return "firestore";
-  } catch (error) {
-    if (error?.code === "not-found") {
-      await setDoc(doc(db, STOCK_COLLECTION, id), payload, { merge: true });
-      return "firestore";
-    }
-    if (!isPermissionError(error)) throw error;
-    return "local";
+  if (history.length) {
+    saveLocalHistory([...history, ...getLocalHistory()].slice(0, 2000));
   }
+  return updated;
 };
 
 export const updateStockRecord = async (id, nextValues, options = {}) => {
@@ -405,24 +421,49 @@ export const updateStockRecord = async (id, nextValues, options = {}) => {
   const current = await fetchStockById(id);
   if (!current) throw new Error("Stock record not found.");
 
-  const name = String(nextValues.name || "").trim();
+  const sno = sanitizeSerialNumber(nextValues.sno ?? current.sno);
+  if (sno === null) throw new Error("S.No. must be a whole number of 1 or more.");
+
+  const name = String(nextValues.name ?? current.name ?? "").trim();
   if (!name) throw new Error("Product / medicine name is required.");
 
   const section = String(nextValues.section ?? current.section ?? "").trim();
-  const repeatedlyUsed = String(nextValues.repeatedlyUsed || "")
-    .trim()
-    .toUpperCase();
-  const repeatedlyValue = repeatedlyUsed === "YES" ? "YES" : "";
+  const repeatedlyValue = normalizeRepeatedlyUsed(
+    nextValues.repeatedlyUsed ?? current.repeatedlyUsed,
+  );
   const adminEditedFields = new Set(current.adminEditedFields || []);
-  if (name !== current.name) adminEditedFields.add("name");
-  if (section !== (current.section || "")) adminEditedFields.add("section");
-  if (repeatedlyValue !== current.repeatedlyUsed) {
-    adminEditedFields.add("repeatedlyUsed");
-  }
+  const history = [];
+  const historyItem = { ...current, sno, name };
+  const source = options.source || "edit";
+
+  const addFieldChange = (columnKey, columnLabel, previous, next) => {
+    if (previous === next) return;
+    adminEditedFields.add(columnKey);
+    history.push(
+      buildHistoryEntry({
+        item: historyItem,
+        columnKey,
+        columnLabel,
+        previous,
+        next,
+        user,
+        source,
+        changeType: "field",
+      }),
+    );
+  };
+
+  addFieldChange("sno", "S.No.", current.sno, sno);
+  addFieldChange("name", "Medicine name", current.name, name);
+  addFieldChange("section", "Section", current.section || "", section);
+  addFieldChange(
+    "repeatedlyUsed",
+    "Repeatedly Used",
+    normalizeRepeatedlyUsed(current.repeatedlyUsed),
+    repeatedlyValue,
+  );
 
   const quantityUpdates = {};
-  const history = [];
-
   STOCK_TYPES.forEach((type) => {
     if (!(type.key in nextValues)) return;
     const sanitized = sanitizeQuantity(nextValues[type.key]);
@@ -433,19 +474,23 @@ export const updateStockRecord = async (id, nextValues, options = {}) => {
     if (sanitized !== toQty(current[type.key])) {
       history.push(
         buildHistoryEntry({
-          item: { ...current, name },
+          item: historyItem,
           columnKey: type.key,
           columnLabel: type.label,
           previous: current[type.key],
           next: sanitized,
           user,
-          source: options.source || "edit",
+          source,
         }),
       );
     }
   });
 
   const payload = {
+    // Keep the workbook matching key when a missing Firestore document has to
+    // be recreated, even if the admin also changes the visible medicine name.
+    key: current.key,
+    sno,
     name,
     searchName: name.toLowerCase(),
     section,
@@ -456,9 +501,7 @@ export const updateStockRecord = async (id, nextValues, options = {}) => {
     ...quantityUpdates,
   };
 
-  await persistItemUpdate(id, payload);
-  await persistHistory(history);
-  return normalizeStockDoc(id, { ...current, ...payload });
+  return persistStockUpdate(id, current, payload, history);
 };
 
 export const fetchStockHistory = async (stockId) => {
@@ -504,7 +547,7 @@ export const exportStockToExcel = async (items, filename = "stock-filter.xlsx") 
     item.section,
     item.name,
     ...STOCK_TYPES.map((t) => toQty(item[t.key])),
-    isYes(item.repeatedlyUsed) ? "YES" : "",
+    normalizeRepeatedlyUsed(item.repeatedlyUsed),
   ]);
   const sheet = XLSX.utils.aoa_to_sheet([header, ...data]);
   sheet["!cols"] = header.map((name, index) => ({
@@ -514,8 +557,3 @@ export const exportStockToExcel = async (items, filename = "stock-filter.xlsx") 
   XLSX.utils.book_append_sheet(workbook, sheet, "Stock");
   XLSX.writeFile(workbook, filename);
 };
-
-const isYes = (value) =>
-  String(value || "")
-    .trim()
-    .toUpperCase() === "YES";
