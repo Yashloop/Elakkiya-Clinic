@@ -205,7 +205,7 @@ export const fetchAllStock = async (onProgress) => {
       seedResult: { seeded: false, count: 0 },
       source: "local",
       warning: isPermissionError(error)
-        ? "Firebase stock rules are not deployed yet. Records are loaded from the existing A-Z workbook and local admin changes. Deploy firestore.rules to save in Firestore."
+        ? "Firebase stock rules are not deployed yet. Records are loaded from the A-Z updated workbook and local admin changes. Deploy firestore.rules to save in Firestore."
         : error.message,
     };
   }
