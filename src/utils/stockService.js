@@ -18,9 +18,7 @@ import {
   STOCK_HISTORY_COLLECTION,
   STOCK_SETTINGS_COLLECTION,
   STOCK_TYPES,
-  DEFAULT_LOW_STOCK_THRESHOLD,
   expandSeedRow,
-  matchKey,
   mergeSeedRows,
   normalizeStockDoc,
   seedDocId,
@@ -32,7 +30,6 @@ const LOCAL_STOCK_KEY = "elakkiya-stock-records";
 const LOCAL_SEED_META_KEY = "elakkiya-stock-seed-meta";
 const SEED_META_DOC = "seedMeta";
 const LOCAL_HISTORY_KEY = "elakkiya-stock-history";
-const LOCAL_SETTINGS_KEY = "elakkiya-stock-settings";
 
 const requireAdmin = () => {
   const user = auth.currentUser;
@@ -111,12 +108,11 @@ const getLocalItems = () => {
     return seeded;
   }
 
-  const items = stored.map((item) => normalizeStockDoc(item.id, item));
-  const localMeta = readLocal(LOCAL_SEED_META_KEY, {});
-  if (localMeta?.signature === seedSignature()) return items;
-
-  // Cached records came from an older workbook -> merge the new one in.
-  const { merged } = mergeSeedIntoItems(items);
+  // Always reconcile the local cache with the active workbook. Older versions
+  // kept removed/duplicate records in the list, which is how an unexpected
+  // total (for example, 1667 instead of the workbook total) could appear.
+  const storedItems = stored.map((item) => normalizeStockDoc(item.id, item));
+  const { merged } = mergeSeedIntoItems(storedItems);
   writeLocal(LOCAL_STOCK_KEY, merged);
   writeLocal(LOCAL_SEED_META_KEY, {
     signature: seedSignature(),
@@ -130,61 +126,6 @@ const saveLocalItems = (items) => writeLocal(LOCAL_STOCK_KEY, items);
 const getLocalHistory = () => readLocal(LOCAL_HISTORY_KEY, []);
 const saveLocalHistory = (rows) => writeLocal(LOCAL_HISTORY_KEY, rows);
 
-const getLocalSettings = () =>
-  readLocal(LOCAL_SETTINGS_KEY, {
-    lowStockThreshold: DEFAULT_LOW_STOCK_THRESHOLD,
-  });
-
-export const fetchStockSettings = async () => {
-  requireAdmin();
-  try {
-    const snap = await getDoc(doc(db, STOCK_SETTINGS_COLLECTION, "config"));
-    if (!snap.exists()) {
-      return { lowStockThreshold: DEFAULT_LOW_STOCK_THRESHOLD, source: "firestore" };
-    }
-    const data = snap.data() || {};
-    const threshold = Number(data.lowStockThreshold);
-    return {
-      lowStockThreshold:
-        Number.isFinite(threshold) && threshold >= 1
-          ? threshold
-          : DEFAULT_LOW_STOCK_THRESHOLD,
-      source: "firestore",
-    };
-  } catch (error) {
-    const local = getLocalSettings();
-    return {
-      lowStockThreshold: local.lowStockThreshold || DEFAULT_LOW_STOCK_THRESHOLD,
-      source: "local",
-      warning: isPermissionError(error)
-        ? "Deploy firestore.rules to persist stock settings in Firebase."
-        : error.message,
-    };
-  }
-};
-
-export const saveStockSettings = async (settings) => {
-  const user = requireAdmin();
-  const threshold = Number(settings.lowStockThreshold);
-  if (!Number.isFinite(threshold) || threshold < 1) {
-    throw new Error("Low-stock threshold must be at least 1.");
-  }
-  const payload = {
-    lowStockThreshold: Math.floor(threshold),
-    updatedAt: new Date().toISOString(),
-    updatedBy: adminLabel(user),
-  };
-  writeLocal(LOCAL_SETTINGS_KEY, payload);
-  try {
-    await setDoc(doc(db, STOCK_SETTINGS_COLLECTION, "config"), payload, {
-      merge: true,
-    });
-  } catch (error) {
-    if (!isPermissionError(error)) throw error;
-  }
-  return { lowStockThreshold: payload.lowStockThreshold };
-};
-
 const seedIfEmpty = async (onProgress) => {
   const existing = await getDocs(
     query(collection(db, STOCK_COLLECTION), limit(1)),
@@ -194,7 +135,9 @@ const seedIfEmpty = async (onProgress) => {
   const localItems = readLocal(LOCAL_STOCK_KEY, null);
   const rows =
     Array.isArray(localItems) && localItems.length
-      ? localItems
+      ? mergeSeedIntoItems(
+          localItems.map((item) => normalizeStockDoc(item.id, item)),
+        ).merged
       : seedItems();
   const now = new Date().toISOString();
   const user = auth.currentUser;
@@ -245,16 +188,14 @@ const writeSeedMeta = async (payload) => {
 };
 
 /**
- * Pushes any workbook changes into Firestore records that were seeded from an
- * older workbook. Quantities already saved by the admin are never overwritten.
+ * Reconciles Firestore with the active workbook. Quantities saved by the admin
+ * always win, but only medicines present in the current workbook are returned
+ * to the UI. This prevents legacy/duplicate documents from changing the list
+ * count or appearing in search results.
  */
 const syncSeedWithFirestore = async (items, onProgress) => {
   const meta = await readSeedMeta();
-  if (meta?.seedSignature === seedSignature()) {
-    return { synced: false, added: 0, updated: 0, items };
-  }
-
-  const { merged, added, updated } = mergeSeedIntoItems(items);
+  const { merged, added, updated, excluded } = mergeSeedIntoItems(items);
   const now = new Date().toISOString();
   const user = auth.currentUser;
 
@@ -285,21 +226,25 @@ const syncSeedWithFirestore = async (items, onProgress) => {
     onProgress?.({ written, total: writes.length });
   }
 
-  await writeSeedMeta({
-    seedSignature: seedSignature(),
-    seedSource: stockSeed.source || "",
-    seedGeneratedAt: stockSeed.generatedAt || "",
-    seedCount: seedInfo().count,
-    syncedAt: now,
-    syncedBy: adminLabel(user),
-    added: added.length,
-    updated: updated.length,
-  });
+  const metadataChanged = meta?.seedSignature !== seedSignature();
+  if (metadataChanged || writes.length) {
+    await writeSeedMeta({
+      seedSignature: seedSignature(),
+      seedSource: stockSeed.source || "",
+      seedGeneratedAt: stockSeed.generatedAt || "",
+      seedCount: seedInfo().count,
+      syncedAt: now,
+      syncedBy: adminLabel(user),
+      added: added.length,
+      updated: updated.length,
+    });
+  }
 
   return {
-    synced: true,
+    synced: metadataChanged || writes.length > 0,
     added: added.length,
     updated: updated.length,
+    excluded: excluded.length,
     items: merged,
   };
 };
@@ -309,16 +254,23 @@ export const fetchAllStock = async (onProgress) => {
   try {
     const seedResult = await seedIfEmpty(onProgress);
     const snap = await getDocs(collection(db, STOCK_COLLECTION));
-    let items = snap.docs.map((d) => normalizeStockDoc(d.id, d.data()));
+    const savedItems = snap.docs.map((document) =>
+      normalizeStockDoc(document.id, document.data()),
+    );
 
-    // The collection already existed (possibly from an older workbook): make
-    // sure it matches the current "A-Z updated.xlsx" before showing it.
-    let syncResult = { synced: false, added: 0, updated: 0 };
-    if (!seedResult.seeded) {
-      const result = await syncSeedWithFirestore(items, onProgress);
-      items = result.items;
-      syncResult = result;
-    } else {
+    // Reconcile on every load, even when the workbook signature is unchanged.
+    // That keeps an old duplicate document from reappearing after a refresh.
+    let syncResult = { synced: false, added: 0, updated: 0, excluded: 0 };
+    let items;
+    if (seedResult.seeded) {
+      const reconciled = mergeSeedIntoItems(savedItems);
+      items = reconciled.merged;
+      syncResult = {
+        synced: false,
+        added: 0,
+        updated: 0,
+        excluded: reconciled.excluded.length,
+      };
       await writeSeedMeta({
         seedSignature: seedSignature(),
         seedSource: stockSeed.source || "",
@@ -329,6 +281,10 @@ export const fetchAllStock = async (onProgress) => {
         added: seedResult.count,
         updated: 0,
       });
+    } else {
+      const result = await syncSeedWithFirestore(savedItems, onProgress);
+      items = result.items;
+      syncResult = result;
     }
 
     items.sort((a, b) =>
@@ -343,11 +299,11 @@ export const fetchAllStock = async (onProgress) => {
     return {
       items,
       seedResult: { seeded: false, count: 0 },
-      syncResult: { synced: false, added: 0, updated: 0 },
+      syncResult: { synced: false, added: 0, updated: 0, excluded: 0 },
       seed: seedInfo(),
       source: "local",
       warning: isPermissionError(error)
-        ? "Firebase stock rules are not deployed yet. Records are loaded from the A-Z updated workbook and local admin changes. Deploy firestore.rules to save in Firestore."
+        ? "Firebase stock rules are not deployed yet. Records are loaded from the active workbook and local admin changes. Deploy firestore.rules to save in Firebase."
         : error.message,
     };
   }
@@ -457,6 +413,12 @@ export const updateStockRecord = async (id, nextValues, options = {}) => {
     .trim()
     .toUpperCase();
   const repeatedlyValue = repeatedlyUsed === "YES" ? "YES" : "";
+  const adminEditedFields = new Set(current.adminEditedFields || []);
+  if (name !== current.name) adminEditedFields.add("name");
+  if (section !== (current.section || "")) adminEditedFields.add("section");
+  if (repeatedlyValue !== current.repeatedlyUsed) {
+    adminEditedFields.add("repeatedlyUsed");
+  }
 
   const quantityUpdates = {};
   const history = [];
@@ -488,6 +450,7 @@ export const updateStockRecord = async (id, nextValues, options = {}) => {
     searchName: name.toLowerCase(),
     section,
     repeatedlyUsed: repeatedlyValue,
+    adminEditedFields: [...adminEditedFields],
     updatedAt: new Date().toISOString(),
     updatedBy: adminLabel(user),
     ...quantityUpdates,
@@ -496,63 +459,6 @@ export const updateStockRecord = async (id, nextValues, options = {}) => {
   await persistItemUpdate(id, payload);
   await persistHistory(history);
   return normalizeStockDoc(id, { ...current, ...payload });
-};
-
-export const bulkUpdateStock = async ({ ids, typeKeys, action, amount }) => {
-  const user = requireAdmin();
-  if (!ids?.length) throw new Error("Select at least one product.");
-  if (!typeKeys?.length) throw new Error("Select at least one stock type.");
-  const value = Number(amount);
-  if (!Number.isFinite(value) || value < 0) {
-    throw new Error("Enter a valid non-negative amount.");
-  }
-  if (action !== "set" && value === 0) {
-    throw new Error("Enter an amount greater than 0.");
-  }
-
-  const uniqueIds = [...new Set(ids)];
-  const history = [];
-  const updatedItems = [];
-
-  for (const id of uniqueIds) {
-    const current = await fetchStockById(id);
-    if (!current) continue;
-    const nextQty = {};
-    typeKeys.forEach((key) => {
-      const type = STOCK_TYPES.find((t) => t.key === key);
-      if (!type) return;
-      const previous = toQty(current[key]);
-      let next = previous;
-      if (action === "increase") next = previous + value;
-      else if (action === "decrease") next = Math.max(0, previous - value);
-      else next = value;
-      next = Math.floor(next);
-      nextQty[key] = next;
-      if (next !== previous) {
-        history.push(
-          buildHistoryEntry({
-            item: current,
-            columnKey: key,
-            columnLabel: type.label,
-            previous,
-            next,
-            user,
-            source: "bulk",
-          }),
-        );
-      }
-    });
-    const payload = {
-      ...nextQty,
-      updatedAt: new Date().toISOString(),
-      updatedBy: adminLabel(user),
-    };
-    await persistItemUpdate(id, payload);
-    updatedItems.push(normalizeStockDoc(id, { ...current, ...payload }));
-  }
-
-  await persistHistory(history);
-  return { updatedItems, historyCount: history.length };
 };
 
 export const fetchStockHistory = async (stockId) => {

@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
   ArrowLeft,
@@ -9,17 +9,13 @@ import {
   Filter,
   LayoutGrid,
   Loader,
-  Package,
-  Pencil,
   RefreshCw,
   Search,
-  Settings2,
   X,
 } from "lucide-react";
 import {
   applyStockQuery,
   computeStats,
-  DEFAULT_LOW_STOCK_THRESHOLD,
   DEFAULT_PAGE_SIZE,
   FILTER_CONDITIONS,
   PAGE_SIZE_OPTIONS,
@@ -27,26 +23,32 @@ import {
   STOCK_TYPES,
 } from "../utils/stockConstants";
 import {
-  bulkUpdateStock,
   exportStockToExcel,
   fetchAllStock,
-  fetchStockSettings,
   resetSeedSync,
-  saveStockSettings,
   seedInfo,
 } from "../utils/stockService";
 import StockTypeSelector from "../components/stock/StockTypeSelector";
 import StockTable from "../components/stock/StockTable";
 import StockPagination from "../components/stock/StockPagination";
 
-const STATE_KEY = "elakkiya-stock-manager-state";
+// V2 intentionally starts with separate queries. The previous state stored one
+// shared search value for View, Update, and Filter, making one screen affect another.
+const STATE_KEY = "elakkiya-stock-manager-state-v2";
 
-const defaultQuery = {
-  tab: "overview",
+const defaultViewQuery = {
+  search: "",
+  sortKey: "name",
+  sortDir: "asc",
+  page: 1,
+  pageSize: DEFAULT_PAGE_SIZE,
+};
+
+const defaultFilterQuery = {
   search: "",
   selectedTypes: [],
-  condition: "lt",
-  value: "2",
+  condition: "",
+  value: "",
   value2: "",
   matchMode: "any",
   repeatedly: "all",
@@ -56,60 +58,116 @@ const defaultQuery = {
   pageSize: DEFAULT_PAGE_SIZE,
 };
 
-const loadSavedState = () => {
+const defaultState = {
+  tab: "overview",
+  overview: defaultViewQuery,
+  filter: defaultFilterQuery,
+};
+
+const saveState = (state) => {
   try {
-    const raw = sessionStorage.getItem(STATE_KEY);
-    if (!raw) return defaultQuery;
-    return { ...defaultQuery, ...JSON.parse(raw) };
+    sessionStorage.setItem(STATE_KEY, JSON.stringify(state));
   } catch {
-    return defaultQuery;
+    // Browsers can disable session storage; the stock screen still works.
   }
 };
 
-const ConfirmModal = ({ title, message, confirmLabel = "Confirm", onConfirm, onCancel }) => (
-  <AnimatePresence>
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4"
-    >
-      <motion.div
-        initial={{ scale: 0.94, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md"
+const loadSavedState = () => {
+  try {
+    const raw = sessionStorage.getItem(STATE_KEY);
+    if (!raw) return defaultState;
+    const saved = JSON.parse(raw);
+    return {
+      tab: saved.tab === "filter" ? "filter" : "overview",
+      overview: { ...defaultViewQuery, ...(saved.overview || {}) },
+      filter: {
+        ...defaultFilterQuery,
+        ...(saved.filter || {}),
+        selectedTypes: Array.isArray(saved.filter?.selectedTypes)
+          ? saved.filter.selectedTypes
+          : [],
+      },
+    };
+  } catch {
+    return defaultState;
+  }
+};
+
+const SearchInput = ({ value, onChange, onClear, label }) => (
+  <div className="relative flex-1">
+    <Search
+      size={16}
+      className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+    />
+    <input
+      type="search"
+      aria-label={label}
+      placeholder="Search every column: remedy, section, S.No., stock value…"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className="w-full pl-9 pr-10 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-400"
+    />
+    {value && (
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label="Clear search"
+        title="Clear search"
+        className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 flex items-center justify-center"
       >
-        <div className="flex items-start gap-3 mb-4">
-          <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-            <AlertCircle className="text-amber-600" size={20} />
-          </div>
-          <div>
-            <h3 className="font-semibold text-gray-900">{title}</h3>
-            <p className="text-sm text-gray-600 mt-1 whitespace-pre-line">{message}</p>
-          </div>
-        </div>
-        <div className="flex gap-3">
-          <button
-            onClick={onCancel}
-            className="flex-1 py-2.5 rounded-xl border-2 border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className="flex-1 py-2.5 rounded-xl bg-teal-600 text-white font-semibold text-sm hover:bg-teal-700"
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </motion.div>
-    </motion.div>
-  </AnimatePresence>
+        <X size={15} />
+      </button>
+    )}
+  </div>
+);
+
+const SearchHint = ({ separate }) => (
+  <p className="text-xs text-gray-500 leading-relaxed">
+    Searches every row before pagination, including Remedy, Section, S.No., Repeatedly
+    Used, and every stock column. For a precise column search, use <code>30:1</code>,{" "}
+    <code>section:A</code>, <code>used:yes</code>, or <code>status:out</code>.
+    {separate ? " This search is separate from the View Stock search." : ""}
+  </p>
+);
+
+const SortAndPageControls = ({ query, onChange }) => (
+  <div className="flex flex-col sm:flex-row gap-3">
+    <select
+      value={`${query.sortKey}:${query.sortDir}`}
+      onChange={(event) => {
+        const [sortKey, sortDir] = event.target.value.split(":");
+        onChange({ sortKey, sortDir });
+      }}
+      aria-label="Sort stock results"
+      className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
+    >
+      <option value="name:asc">Name A → Z</option>
+      <option value="name:desc">Name Z → A</option>
+      <option value="lowest:asc">Lowest positive value first</option>
+      <option value="total:desc">Highest total first</option>
+      <option value="updatedAt:desc">Recently updated</option>
+      <option value="updatedAt:asc">Oldest updated</option>
+      <option value="sno:asc">S.No. ascending</option>
+    </select>
+    <select
+      value={query.pageSize}
+      onChange={(event) => onChange({ pageSize: Number(event.target.value) })}
+      aria-label="Results per page"
+      className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
+    >
+      {PAGE_SIZE_OPTIONS.map((size) => (
+        <option key={size} value={size}>
+          {size} / page
+        </option>
+      ))}
+    </select>
+  </div>
 );
 
 const StockManagement = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const pendingUpdatedItem = useRef(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(null);
@@ -117,190 +175,180 @@ const StockManagement = () => {
   const [warning, setWarning] = useState("");
   const [toast, setToast] = useState(null);
   const [queryState, setQueryState] = useState(loadSavedState);
-  const [threshold, setThreshold] = useState(DEFAULT_LOW_STOCK_THRESHOLD);
-  const [thresholdDraft, setThresholdDraft] = useState(DEFAULT_LOW_STOCK_THRESHOLD);
-  const [showSettings, setShowSettings] = useState(false);
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [bulkAction, setBulkAction] = useState("increase");
-  const [bulkAmount, setBulkAmount] = useState("1");
-  const [bulkTypes, setBulkTypes] = useState(["pot30"]);
-  const [confirm, setConfirm] = useState(null);
   const [exporting, setExporting] = useState(false);
-  const [applyingBulk, setApplyingBulk] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [seedMeta] = useState(() => seedInfo());
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3200);
+    window.setTimeout(() => setToast(null), 3200);
   };
 
-  const updateQuery = (patch) => {
-    setQueryState((prev) => {
-      const next = { ...prev, ...patch };
-      if (!("page" in patch)) next.page = 1;
-      sessionStorage.setItem(STATE_KEY, JSON.stringify(next));
+  const updateTabQuery = (tab, patch, replace = false) => {
+    setQueryState((previous) => {
+      const defaults = tab === "filter" ? defaultFilterQuery : defaultViewQuery;
+      const current = previous[tab] || defaults;
+      const nextQuery = replace
+        ? { ...defaults, ...patch }
+        : { ...current, ...patch };
+      if (!Object.prototype.hasOwnProperty.call(patch, "page")) {
+        nextQuery.page = 1;
+      }
+      const next = { ...previous, [tab]: nextQuery };
+      saveState(next);
       return next;
     });
   };
 
-  const loadData = useCallback(async ({ silent = false } = {}) => {
-    setLoading(true);
-    setError("");
-    try {
-      const [
-        { items: stockItems, seedResult, syncResult, warning: loadWarning },
-        settings,
-      ] =
-        await Promise.all([
-          fetchAllStock((progress) => setSeeding(progress)),
-          fetchStockSettings().catch(() => ({
-            lowStockThreshold: DEFAULT_LOW_STOCK_THRESHOLD,
-          })),
-        ]);
-      setItems(stockItems);
-      setThreshold(settings.lowStockThreshold);
-      setThresholdDraft(settings.lowStockThreshold);
-      setWarning(loadWarning || settings.warning || "");
-      if (seedResult?.seeded) {
-        showToast(`Loaded ${seedResult.count} medicine records from ${seedMeta.source}`);
-      } else if (syncResult?.synced) {
-        showToast(
-          `Workbook synced · ${syncResult.added} new, ${syncResult.updated} updated · ${stockItems.length} total`,
+  const switchTab = (tab) => {
+    setQueryState((previous) => {
+      const next = { ...previous, tab };
+      saveState(next);
+      return next;
+    });
+  };
+
+  const loadData = useCallback(
+    async ({ silent = false } = {}) => {
+      setLoading(true);
+      setError("");
+      try {
+        const {
+          items: stockItems,
+          seedResult,
+          syncResult,
+          warning: loadWarning,
+        } = await fetchAllStock((progress) => setSeeding(progress));
+        const updated = pendingUpdatedItem.current;
+        const nextItems = updated
+          ? stockItems.map((item) =>
+              item.id === updated.id ? { ...item, ...updated } : item,
+            )
+          : stockItems;
+        pendingUpdatedItem.current = null;
+        setItems(nextItems);
+        setWarning(loadWarning || "");
+
+        if (seedResult?.seeded) {
+          showToast(`Loaded ${nextItems.length.toLocaleString()} medicines from ${seedMeta.source}`);
+        } else if (syncResult?.synced) {
+          showToast(
+            `Workbook checked · ${syncResult.added} added, ${syncResult.updated} updated · ${nextItems.length.toLocaleString()} active medicines`,
+          );
+        } else if (silent) {
+          showToast(`Stock list refreshed · ${nextItems.length.toLocaleString()} active medicines`);
+        }
+      } catch (loadError) {
+        console.error(loadError);
+        setError(
+          loadError?.code === "auth/unauthenticated"
+            ? "Please sign in as an admin to manage stock."
+            : loadError?.message || "Failed to load stock records.",
         );
-      } else if (silent) {
-        showToast(`Already up to date with ${seedMeta.source} (${stockItems.length} records)`);
+      } finally {
+        setLoading(false);
+        setSeeding(null);
       }
-    } catch (err) {
-      console.error(err);
-      setError(
-        err?.code === "auth/unauthenticated"
-          ? "Please sign in as admin to manage stock."
-          : err?.message || "Failed to load stock records.",
-      );
-    } finally {
-      setLoading(false);
-      setSeeding(null);
-    }
-  }, [seedMeta.source]);
+    },
+    [seedMeta.source],
+  );
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    const updated = location.state?.updatedItem;
+    if (!updated) return;
+
+    // Keep the just-saved record visible immediately while the initial reload
+    // completes. This also preserves the active search/filter after editing.
+    pendingUpdatedItem.current = updated;
+    setItems((previous) =>
+      previous.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
+    );
+    showToast("Changes saved. Your current search and filters were kept.");
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate]);
+
+  const activeTab = queryState.tab;
+  const activeQuery = queryState[activeTab];
+  const stats = useMemo(() => computeStats(items), [items]);
+  const filtered = useMemo(
+    () => applyStockQuery(items, activeQuery),
+    [items, activeQuery],
+  );
+  const pageData = useMemo(
+    () => paginateItems(filtered, activeQuery.page, activeQuery.pageSize),
+    [filtered, activeQuery.page, activeQuery.pageSize],
+  );
+
+  useEffect(() => {
+    if (pageData.page !== activeQuery.page) {
+      updateTabQuery(activeTab, { page: pageData.page });
+    }
+  }, [activeQuery.page, activeTab, pageData.page]);
+
+  const applyCardFilter = (type) => {
+    setQueryState((previous) => {
+      let next;
+      if (type === "total") {
+        next = {
+          ...previous,
+          tab: "overview",
+          overview: { ...defaultViewQuery },
+        };
+      } else if (type === "out") {
+        next = {
+          ...previous,
+          tab: "filter",
+          filter: {
+            ...defaultFilterQuery,
+            selectedTypes: STOCK_TYPES.map((stockType) => stockType.key),
+            condition: "zero",
+            matchMode: "all",
+            repeatedly: "yes",
+          },
+        };
+      } else {
+        next = {
+          ...previous,
+          tab: "filter",
+          filter: {
+            ...defaultFilterQuery,
+            repeatedly: "yes",
+          },
+        };
+      }
+      saveState(next);
+      return next;
+    });
+  };
+
+  const handleSort = (key) => {
+    if (activeQuery.sortKey === key) {
+      updateTabQuery(activeTab, {
+        sortDir: activeQuery.sortDir === "asc" ? "desc" : "asc",
+      });
+    } else {
+      updateTabQuery(activeTab, {
+        sortKey: key,
+        sortDir: key === "updatedAt" ? "desc" : "asc",
+      });
+    }
+  };
 
   const handleWorkbookSync = async () => {
     setSyncing(true);
     try {
       await resetSeedSync();
       await loadData({ silent: true });
-    } catch (err) {
-      console.error(err);
-      showToast(err.message || "Workbook sync failed", "error");
+    } catch (syncError) {
+      console.error(syncError);
+      showToast(syncError.message || "Workbook sync failed", "error");
     } finally {
       setSyncing(false);
     }
-  };
-
-  useEffect(() => {
-    if (location.state?.updatedItem) {
-      const updated = location.state.updatedItem;
-      setItems((prev) => prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
-      showToast("Stock updated successfully");
-      navigate(location.pathname, { replace: true, state: {} });
-    }
-  }, [location.state, location.pathname, navigate]);
-
-  const stats = useMemo(() => computeStats(items, threshold), [items, threshold]);
-
-  const filtered = useMemo(
-    () => applyStockQuery(items, queryState),
-    [items, queryState],
-  );
-
-  const pageData = useMemo(
-    () => paginateItems(filtered, queryState.page, queryState.pageSize),
-    [filtered, queryState.page, queryState.pageSize],
-  );
-
-  useEffect(() => {
-    if (pageData.page !== queryState.page) {
-      updateQuery({ page: pageData.page });
-    }
-  }, [pageData.page, queryState.page]);
-
-  const applyCardFilter = (type) => {
-    if (type === "total") {
-      updateQuery({
-        tab: "overview",
-        search: "",
-        selectedTypes: [],
-        condition: "",
-        repeatedly: "all",
-        sortKey: "name",
-        sortDir: "asc",
-      });
-      return;
-    }
-    if (type === "low") {
-      updateQuery({
-        tab: "filter",
-        selectedTypes: STOCK_TYPES.map((t) => t.key),
-        condition: "lt",
-        value: String(threshold),
-        matchMode: "any",
-        repeatedly: "all",
-        sortKey: "lowest",
-        sortDir: "asc",
-      });
-      return;
-    }
-    if (type === "out") {
-      updateQuery({
-        tab: "filter",
-        selectedTypes: STOCK_TYPES.map((t) => t.key),
-        condition: "zero",
-        matchMode: "all",
-        repeatedly: "all",
-        sortKey: "name",
-        sortDir: "asc",
-      });
-      return;
-    }
-    updateQuery({
-      tab: "filter",
-      selectedTypes: [],
-      condition: "",
-      repeatedly: "yes",
-      sortKey: "name",
-      sortDir: "asc",
-    });
-  };
-
-  const handleSort = (key) => {
-    if (queryState.sortKey === key) {
-      updateQuery({ sortDir: queryState.sortDir === "asc" ? "desc" : "asc" });
-    } else {
-      updateQuery({ sortKey: key, sortDir: key === "updatedAt" ? "desc" : "asc" });
-    }
-  };
-
-  const openEdit = (item) => navigate(`/admin/stock/edit/${item.id}`);
-  const openHistory = (item) => navigate(`/admin/stock/history/${item.id}`);
-
-  const toggleSelect = (id) => {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
-  };
-
-  const toggleSelectAllVisible = () => {
-    const visibleIds = pageData.rows.map((row) => row.id);
-    const allSelected = visibleIds.every((id) => selectedIds.includes(id));
-    setSelectedIds((prev) =>
-      allSelected
-        ? prev.filter((id) => !visibleIds.includes(id))
-        : [...new Set([...prev, ...visibleIds])],
-    );
   };
 
   const handleExport = async () => {
@@ -310,86 +358,19 @@ const StockManagement = () => {
         filtered,
         `stock-filter-${new Date().toISOString().slice(0, 10)}.xlsx`,
       );
-      showToast(`Exported ${filtered.length} matching records`);
-    } catch (err) {
-      console.error(err);
-      showToast("Failed to download Excel file", "error");
+      showToast(`Downloaded ${filtered.length.toLocaleString()} matching records`);
+    } catch (exportError) {
+      console.error(exportError);
+      showToast("Failed to download the Excel file", "error");
     } finally {
       setExporting(false);
     }
   };
 
-  const requestBulkUpdate = () => {
-    if (!selectedIds.length) {
-      showToast("Select at least one product", "error");
-      return;
-    }
-    if (!bulkTypes.length) {
-      showToast("Select at least one stock type for the bulk update", "error");
-      return;
-    }
-    const amount = Number(bulkAmount);
-    if (!Number.isFinite(amount) || amount < 0) {
-      showToast("Enter a valid amount", "error");
-      return;
-    }
-    const labels = bulkTypes
-      .map((key) => STOCK_TYPES.find((t) => t.key === key)?.label)
-      .filter(Boolean)
-      .join(", ");
-    const actionLabel =
-      bulkAction === "increase"
-        ? `increase ${labels} by ${amount}`
-        : bulkAction === "decrease"
-          ? `decrease ${labels} by ${amount} (not below 0)`
-          : `set ${labels} to ${amount}`;
-    setConfirm({
-      title: "Confirm bulk stock update",
-      message: `${selectedIds.length} item${selectedIds.length === 1 ? "" : "s"} selected.\nThis will ${actionLabel}.\nEach change will be written to the existing record and added to stock history.`,
-      confirmLabel: "Apply to selected",
-      onConfirm: async () => {
-        setConfirm(null);
-        setApplyingBulk(true);
-        try {
-          const result = await bulkUpdateStock({
-            ids: selectedIds,
-            typeKeys: bulkTypes,
-            action: bulkAction,
-            amount,
-          });
-          const map = new Map(result.updatedItems.map((item) => [item.id, item]));
-          setItems((prev) => prev.map((item) => map.get(item.id) || item));
-          setSelectedIds([]);
-          showToast(`Updated ${result.updatedItems.length} records · ${result.historyCount} history entries`);
-        } catch (err) {
-          console.error(err);
-          showToast(err.message || "Bulk update failed", "error");
-        } finally {
-          setApplyingBulk(false);
-        }
-      },
-    });
-  };
-
-  const saveThreshold = async () => {
-    try {
-      const next = await saveStockSettings({ lowStockThreshold: thresholdDraft });
-      setThreshold(next.lowStockThreshold);
-      setShowSettings(false);
-      showToast("Low-stock threshold updated");
-    } catch (err) {
-      showToast(err.message || "Could not save threshold", "error");
-    }
-  };
-
   const tabs = [
-    { id: "overview", label: "Stock Overview", icon: LayoutGrid },
-    { id: "update", label: "Stock Update", icon: Pencil },
-    { id: "filter", label: "Stock Filter", icon: Filter },
+    { id: "overview", label: "View Stock", icon: LayoutGrid },
+    { id: "filter", label: "Search & Filter", icon: Filter },
   ];
-
-  const showAdvanced =
-    queryState.tab === "update" || queryState.tab === "filter";
 
   if (loading) {
     return (
@@ -400,7 +381,7 @@ const StockManagement = () => {
           </div>
           <p className="text-gray-500 font-medium">
             {seeding
-              ? `Preparing existing stock records… ${seeding.written}/${seeding.total}`
+              ? `Preparing active stock records… ${seeding.written}/${seeding.total}`
               : "Loading stock management…"}
           </p>
         </div>
@@ -421,23 +402,13 @@ const StockManagement = () => {
             }`}
           >
             {toast.type === "error" ? <AlertCircle size={16} /> : <CheckCircle size={16} />}
-            {toast.message}
-            <button onClick={() => setToast(null)}>
+            <span>{toast.message}</span>
+            <button type="button" onClick={() => setToast(null)} aria-label="Dismiss message">
               <X size={14} />
             </button>
           </motion.div>
         )}
       </AnimatePresence>
-
-      {confirm && (
-        <ConfirmModal
-          title={confirm.title}
-          message={confirm.message}
-          confirmLabel={confirm.confirmLabel}
-          onConfirm={confirm.onConfirm}
-          onCancel={() => setConfirm(null)}
-        />
-      )}
 
       <div className="max-w-7xl mx-auto space-y-6">
         <motion.div
@@ -453,6 +424,7 @@ const StockManagement = () => {
             <div className="flex items-center justify-between flex-wrap gap-4">
               <div>
                 <button
+                  type="button"
                   onClick={() => navigate("/admin")}
                   className="inline-flex items-center gap-1.5 text-white/80 hover:text-white text-sm mb-2"
                 >
@@ -462,76 +434,59 @@ const StockManagement = () => {
                   📦 Stock Management
                 </h1>
                 <p className="text-white/70 text-sm mt-1">
-                  Search, update, filter and audit clinic medicine stock
+                  View, search, filter, and individually update clinic medicine stock
                 </p>
-                <p className="text-white/50 text-xs mt-1">
-                  Source: {seedMeta.source} · {seedMeta.count.toLocaleString()} remedies
-                  {seedMeta.skippedBlankRows
-                    ? ` (${seedMeta.sheetRows} sheet rows, ${seedMeta.skippedBlankRows} blank)`
-                    : ""}
-                  {stats.total !== seedMeta.count
-                    ? ` · showing ${stats.total.toLocaleString()}`
-                    : ""}
+                <p className="text-white/55 text-xs mt-1">
+                  Active workbook: {seedMeta.source} · {stats.total.toLocaleString()} medicines
                 </p>
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setShowSettings((v) => !v)}
-                  className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white text-sm font-medium px-4 py-2 rounded-xl border border-white/20"
-                >
-                  <Settings2 size={15} />
-                  Threshold
-                </button>
-                <button
+                  type="button"
                   onClick={handleWorkbookSync}
                   disabled={syncing}
-                  title={`Re-apply ${seedMeta.source} (${seedMeta.count} remedies)`}
+                  title={`Refresh from ${seedMeta.source}`}
                   className="flex items-center gap-2 bg-white/10 hover:bg-white/20 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded-xl border border-white/20"
                 >
                   <RefreshCw size={15} className={syncing ? "animate-spin" : ""} />
                   {syncing ? "Syncing…" : "Sync workbook"}
                 </button>
                 <button
-                  onClick={() => loadData()}
+                  type="button"
+                  onClick={() => loadData({ silent: true })}
                   className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white text-sm font-medium px-4 py-2 rounded-xl border border-white/20"
                 >
-                  <RefreshCw size={15} />
-                  Refresh
+                  <RefreshCw size={15} /> Refresh
                 </button>
               </div>
             </div>
 
-            {showSettings && (
-              <div className="mt-4 bg-white/10 border border-white/15 rounded-xl p-4 flex flex-wrap items-end gap-3">
-                <div>
-                  <label className="block text-xs text-white/70 mb-1">
-                    Low-stock threshold
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={thresholdDraft}
-                    onChange={(e) => setThresholdDraft(e.target.value)}
-                    className="w-28 px-3 py-2 rounded-lg text-sm text-gray-800"
-                  />
-                </div>
-                <button
-                  onClick={saveThreshold}
-                  className="px-4 py-2 rounded-lg bg-white text-teal-800 text-sm font-semibold"
-                >
-                  Save
-                </button>
-              </div>
-            )}
-
-            <div className="mt-6 grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
               {[
-                { key: "total", label: "Total Items", value: stats.total, icon: "📦" },
-                { key: "low", label: "Low Stock", value: stats.lowStock, icon: "⚠️" },
-                { key: "out", label: "Out of Stock", value: stats.outOfStock, icon: "🚫" },
-                { key: "used", label: "Repeatedly Used", value: stats.repeatedlyUsed, icon: "🔁" },
+                {
+                  key: "total",
+                  label: "Workbook Medicines",
+                  detail: "Current active list",
+                  value: stats.total,
+                  icon: "📦",
+                },
+                {
+                  key: "out",
+                  label: "Out of Stock",
+                  detail: "Repeatedly used only",
+                  value: stats.outOfStock,
+                  icon: "🚫",
+                },
+                {
+                  key: "used",
+                  label: "Repeatedly Used",
+                  detail: `${stats.inStock.toLocaleString()} currently in stock`,
+                  value: stats.repeatedlyUsed,
+                  icon: "🔁",
+                },
               ].map((card) => (
                 <button
+                  type="button"
                   key={card.key}
                   onClick={() => applyCardFilter(card.key)}
                   className="bg-white/10 hover:bg-white/20 backdrop-blur-sm rounded-xl px-4 py-3 text-center border border-white/10 transition"
@@ -540,26 +495,35 @@ const StockManagement = () => {
                   <p className="text-2xl font-bold text-white mt-1">
                     {card.value.toLocaleString()}
                   </p>
-                  <p className="text-white/60 text-xs">{card.label}</p>
+                  <p className="text-white/75 text-xs font-semibold">{card.label}</p>
+                  <p className="text-white/50 text-[11px] mt-0.5">{card.detail}</p>
                 </button>
               ))}
             </div>
+            <p className="text-white/60 text-xs mt-3">
+              Out of stock means every stock column is 0 for a medicine marked Repeatedly
+              Used = YES. A value of 1 is treated as in stock; there is no low-stock alert.
+            </p>
           </div>
 
           <div className="flex border-t border-white/10">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => updateQuery({ tab: tab.id })}
-                className={`flex-1 py-3 text-sm font-semibold transition-colors ${
-                  queryState.tab === tab.id
-                    ? "bg-white/15 text-white border-b-2 border-white"
-                    : "text-white/50 hover:text-white/80"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+            {tabs.map((tab) => {
+              const TabIcon = tab.icon;
+              return (
+                <button
+                  type="button"
+                  key={tab.id}
+                  onClick={() => switchTab(tab.id)}
+                  className={`flex-1 py-3 text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${
+                    activeTab === tab.id
+                      ? "bg-white/15 text-white border-b-2 border-white"
+                      : "text-white/50 hover:text-white/80"
+                  }`}
+                >
+                  <TabIcon size={15} /> {tab.label}
+                </button>
+              );
+            })}
           </div>
         </motion.div>
 
@@ -574,69 +538,68 @@ const StockManagement = () => {
           </div>
         )}
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-4">
-          <div className="flex flex-col lg:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search
-                size={16}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+        {activeTab === "overview" ? (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
+            <div className="flex flex-col lg:flex-row gap-3">
+              <SearchInput
+                value={activeQuery.search}
+                onChange={(search) => updateTabQuery("overview", { search })}
+                onClear={() => updateTabQuery("overview", { search: "" })}
+                label="Search all stock columns in View Stock"
               />
-              <input
-                type="text"
-                placeholder="Search remedy name, section, or S.No…"
-                value={queryState.search}
-                onChange={(e) => updateQuery({ search: e.target.value })}
-                className="w-full pl-9 pr-4 py-2.5 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-400"
-              />
-            </div>
-            <select
-              value={`${queryState.sortKey}:${queryState.sortDir}`}
-              onChange={(e) => {
-                const [sortKey, sortDir] = e.target.value.split(":");
-                updateQuery({ sortKey, sortDir });
-              }}
-              className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
-            >
-              <option value="name:asc">Name A → Z</option>
-              <option value="name:desc">Name Z → A</option>
-              <option value="lowest:asc">Lowest quantity first</option>
-              <option value="total:desc">Highest quantity first</option>
-              <option value="updatedAt:desc">Recently updated</option>
-              <option value="updatedAt:asc">Oldest updated</option>
-              <option value="sno:asc">S.No. ascending</option>
-            </select>
-            <select
-              value={queryState.pageSize}
-              onChange={(e) => updateQuery({ pageSize: Number(e.target.value) })}
-              className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
-            >
-              {PAGE_SIZE_OPTIONS.map((n) => (
-                <option key={n} value={n}>
-                  {n} / page
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {showAdvanced && (
-            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-gray-800">Advanced Filters</h3>
-                {queryState.tab === "filter" && (
-                  <button
-                    onClick={handleExport}
-                    disabled={exporting || filtered.length === 0}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold disabled:opacity-50"
-                  >
-                    {exporting ? <Loader className="animate-spin" size={14} /> : <Download size={14} />}
-                    Download Excel
-                  </button>
-                )}
+              <div className="lg:w-[390px]">
+                <SortAndPageControls
+                  query={activeQuery}
+                  onChange={(patch) => updateTabQuery("overview", patch)}
+                />
               </div>
+            </div>
+            <SearchHint />
+          </div>
+        ) : (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-bold text-gray-800">Search & Filter Stock</h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  This search and these filters do not change the View Stock tab.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => updateTabQuery("filter", defaultFilterQuery, true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-xs font-semibold"
+                >
+                  <X size={14} /> Clear filters
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  disabled={exporting || filtered.length === 0}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold disabled:opacity-50"
+                >
+                  {exporting ? <Loader className="animate-spin" size={14} /> : <Download size={14} />}
+                  Download Excel
+                </button>
+              </div>
+            </div>
 
+            <SearchInput
+              value={activeQuery.search}
+              onChange={(search) => updateTabQuery("filter", { search })}
+              onClear={() => updateTabQuery("filter", { search: "" })}
+              label="Search all stock columns in Search and Filter"
+            />
+            <SearchHint separate />
+
+            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-4">
               <StockTypeSelector
-                selected={queryState.selectedTypes}
-                onChange={(selectedTypes) => updateQuery({ selectedTypes })}
+                title="Quantity columns to filter"
+                selected={activeQuery.selectedTypes}
+                onChange={(selectedTypes) =>
+                  updateTabQuery("filter", { selectedTypes })
+                }
               />
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -645,19 +608,21 @@ const StockManagement = () => {
                     Condition
                   </label>
                   <select
-                    value={queryState.condition}
-                    onChange={(e) => updateQuery({ condition: e.target.value })}
+                    value={activeQuery.condition}
+                    onChange={(event) =>
+                      updateTabQuery("filter", { condition: event.target.value })
+                    }
                     className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
                   >
                     <option value="">No quantity condition</option>
-                    {FILTER_CONDITIONS.map((c) => (
-                      <option key={c.key} value={c.key}>
-                        {c.label}
+                    {FILTER_CONDITIONS.map((condition) => (
+                      <option key={condition.key} value={condition.key}>
+                        {condition.label}
                       </option>
                     ))}
                   </select>
                 </div>
-                {queryState.condition && queryState.condition !== "zero" && (
+                {activeQuery.condition && activeQuery.condition !== "zero" && (
                   <div>
                     <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
                       Value
@@ -665,13 +630,15 @@ const StockManagement = () => {
                     <input
                       type="number"
                       min="0"
-                      value={queryState.value}
-                      onChange={(e) => updateQuery({ value: e.target.value })}
+                      value={activeQuery.value}
+                      onChange={(event) =>
+                        updateTabQuery("filter", { value: event.target.value })
+                      }
                       className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5"
                     />
                   </div>
                 )}
-                {queryState.condition === "between" && (
+                {activeQuery.condition === "between" && (
                   <div>
                     <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
                       And
@@ -679,8 +646,10 @@ const StockManagement = () => {
                     <input
                       type="number"
                       min="0"
-                      value={queryState.value2}
-                      onChange={(e) => updateQuery({ value2: e.target.value })}
+                      value={activeQuery.value2}
+                      onChange={(event) =>
+                        updateTabQuery("filter", { value2: event.target.value })
+                      }
                       className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5"
                     />
                   </div>
@@ -690,102 +659,69 @@ const StockManagement = () => {
                     Repeatedly Used
                   </label>
                   <select
-                    value={queryState.repeatedly}
-                    onChange={(e) => updateQuery({ repeatedly: e.target.value })}
+                    value={activeQuery.repeatedly}
+                    onChange={(event) =>
+                      updateTabQuery("filter", { repeatedly: event.target.value })
+                    }
                     className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
                   >
-                    <option value="all">All</option>
+                    <option value="all">All medicines</option>
                     <option value="yes">YES only</option>
                     <option value="no">Not YES</option>
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                    Multiple types
+                    Multiple columns
                   </label>
                   <select
-                    value={queryState.matchMode}
-                    onChange={(e) => updateQuery({ matchMode: e.target.value })}
+                    value={activeQuery.matchMode}
+                    onChange={(event) =>
+                      updateTabQuery("filter", { matchMode: event.target.value })
+                    }
                     className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
                   >
-                    <option value="any">Match Any selected type</option>
-                    <option value="all">Match All selected types</option>
+                    <option value="any">Any selected column matches</option>
+                    <option value="all">All selected columns match</option>
                   </select>
                 </div>
               </div>
-            </div>
-          )}
-        </div>
 
-        {queryState.tab === "update" && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-gray-800">
-                Bulk Stock Update
-                <span className="ml-2 text-gray-400 font-normal">
-                  {selectedIds.length} selected
-                </span>
+              <p className="text-xs text-gray-500">
+                Select one or more quantity columns, then choose a condition. “Any” returns a
+                medicine when one selected column matches; “All” requires every selected column
+                to match.
               </p>
             </div>
-            <StockTypeSelector
-              title="Apply to stock types"
-              selected={bulkTypes}
-              onChange={setBulkTypes}
+
+            <SortAndPageControls
+              query={activeQuery}
+              onChange={(patch) => updateTabQuery("filter", patch)}
             />
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <select
-                value={bulkAction}
-                onChange={(e) => setBulkAction(e.target.value)}
-                className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
-              >
-                <option value="increase">Increase stock</option>
-                <option value="decrease">Decrease stock</option>
-                <option value="set">Set stock to value</option>
-              </select>
-              <input
-                type="number"
-                min="0"
-                value={bulkAmount}
-                onChange={(e) => setBulkAmount(e.target.value)}
-                className="text-sm border border-gray-200 rounded-xl px-3 py-2.5"
-                placeholder="Amount"
-              />
-              <button
-                onClick={requestBulkUpdate}
-                disabled={applyingBulk}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold py-2.5 disabled:opacity-50"
-              >
-                {applyingBulk ? <Loader className="animate-spin" size={16} /> : <Package size={16} />}
-                Apply to Selected
-              </button>
-            </div>
           </div>
         )}
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-4">
             <div>
               <h2 className="font-bold text-gray-800">
-                {queryState.tab === "filter" ? "Filtered Results" : "Stock Results"}
+                {activeTab === "filter" ? "Filtered Results" : "Stock Results"}
               </h2>
               <p className="text-xs text-gray-400 mt-0.5">
-                {filtered.length.toLocaleString()} matching records · click a product to edit
+                {filtered.length.toLocaleString()} matching record{filtered.length === 1 ? "" : "s"}
+                {activeQuery.search ? " · searched across all stock columns" : ""}
+                {" · click a medicine to edit and save changes"}
               </p>
             </div>
           </div>
           <StockTable
             rows={pageData.rows}
             loading={false}
-            threshold={threshold}
-            sortKey={queryState.sortKey}
-            sortDir={queryState.sortDir}
+            sortKey={activeQuery.sortKey}
+            sortDir={activeQuery.sortDir}
             onSort={handleSort}
-            selectedIds={selectedIds}
-            onToggleSelect={toggleSelect}
-            onToggleSelectAll={toggleSelectAllVisible}
-            showCheckboxes={queryState.tab === "update"}
-            onEdit={openEdit}
-            onHistory={openHistory}
+            onEdit={(item) => navigate(`/admin/stock/edit/${item.id}`)}
+            onHistory={(item) => navigate(`/admin/stock/history/${item.id}`)}
           />
           <StockPagination
             page={pageData.page}
@@ -793,7 +729,7 @@ const StockManagement = () => {
             total={pageData.total}
             start={pageData.start}
             end={pageData.end}
-            onPageChange={(page) => updateQuery({ page })}
+            onPageChange={(page) => updateTabQuery(activeTab, { page })}
           />
         </div>
       </div>

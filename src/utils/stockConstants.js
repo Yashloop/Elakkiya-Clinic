@@ -2,7 +2,6 @@ export const STOCK_COLLECTION = "stock";
 export const STOCK_HISTORY_COLLECTION = "stockHistory";
 export const STOCK_SETTINGS_COLLECTION = "stockSettings";
 export const DEFAULT_PAGE_SIZE = 10;
-export const DEFAULT_LOW_STOCK_THRESHOLD = 2;
 
 /** Existing Excel / clinic stock quantity columns */
 export const STOCK_TYPES = [
@@ -27,7 +26,7 @@ export const STOCK_TYPES = [
   { key: "ointments", label: "Ointments", excel: "Ointments" },
 ];
 
-export const STOCK_TYPE_KEYS = STOCK_TYPES.map((t) => t.key);
+export const STOCK_TYPE_KEYS = STOCK_TYPES.map((type) => type.key);
 
 export const FILTER_CONDITIONS = [
   { key: "lt", label: "Less than" },
@@ -55,8 +54,8 @@ export const matchKey = (value) => slugifyName(value);
 
 export const toQty = (value) => {
   if (value === null || value === undefined || value === "") return 0;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
 };
 
 export const isRepeatedlyUsedYes = (value) =>
@@ -65,9 +64,9 @@ export const isRepeatedlyUsedYes = (value) =>
     .toUpperCase() === "YES";
 
 export const emptyQuantities = () =>
-  STOCK_TYPES.reduce((acc, type) => {
-    acc[type.key] = 0;
-    return acc;
+  STOCK_TYPES.reduce((quantities, type) => {
+    quantities[type.key] = 0;
+    return quantities;
   }, {});
 
 export const expandSeedRow = (row) => {
@@ -82,9 +81,9 @@ export const expandSeedRow = (row) => {
     repeatedlyUsed: isRepeatedlyUsedYes(row.repeatedlyUsed) ? "YES" : "",
     ...emptyQuantities(),
   };
-  const qty = row.qty || {};
+  const quantities = row.qty || {};
   STOCK_TYPES.forEach((type) => {
-    item[type.key] = toQty(qty[type.key]);
+    item[type.key] = toQty(quantities[type.key]);
   });
   return item;
 };
@@ -99,6 +98,13 @@ export const normalizeStockDoc = (id, data = {}) => {
     name,
     searchName: (data.searchName || name).toString().trim().toLowerCase(),
     repeatedlyUsed: isRepeatedlyUsedYes(data.repeatedlyUsed) ? "YES" : "",
+    // Fields deliberately changed through the stock editor take precedence over
+    // workbook metadata on future refreshes, so a saved edit remains searchable.
+    adminEditedFields: Array.isArray(data.adminEditedFields)
+      ? data.adminEditedFields.filter((field) =>
+          ["name", "section", "repeatedlyUsed"].includes(field),
+        )
+      : [],
     updatedAt: data.updatedAt || "",
     updatedBy: data.updatedBy || "",
     ...emptyQuantities(),
@@ -109,115 +115,171 @@ export const normalizeStockDoc = (id, data = {}) => {
   return item;
 };
 
+const timestampFor = (value) => {
+  const date = value?.toDate ? value.toDate() : new Date(value || 0);
+  const timestamp = date.getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
 /**
- * Merges the workbook seed into records that are already stored.
- * Existing quantities (admin edits) always win; remedies that are new in the
- * workbook are added, and section / S.No. / "repeatedly used" metadata is
- * refreshed so the app never keeps showing an older workbook.
+ * Merges saved records into the current workbook without overwriting admin edits.
+ *
+ * The workbook is the active medicine list. Legacy, duplicate, or removed workbook
+ * records are deliberately omitted from `merged`, so an old cached/Firestore record
+ * cannot inflate the number of medicines shown in the stock screen. They are not
+ * deleted from Firestore here; only the current workbook rows are displayed.
  */
 export const mergeSeedRows = (seed = [], existing = []) => {
-  const byKey = new Map();
-  existing.forEach((item) => {
-    const key = item.key || matchKey(item.name);
-    if (key && !byKey.has(key)) byKey.set(key, item);
+  const candidatesByKey = new Map();
+  existing.forEach((rawItem) => {
+    const item = normalizeStockDoc(rawItem.id, rawItem);
+    // Match a legacy document by its saved key or by its medicine name. Some
+    // older records used a different key format but still contain the correct
+    // name and must retain their edited quantities.
+    const keys = new Set([item.key, matchKey(item.name)].filter(Boolean));
+    keys.forEach((key) => {
+      const candidates = candidatesByKey.get(key) || [];
+      candidates.push(item);
+      candidatesByKey.set(key, candidates);
+    });
   });
 
+  const usedIds = new Set();
   const added = [];
   const updated = [];
-  const merged = [...existing];
-  const indexById = new Map(merged.map((item, i) => [item.id, i]));
+  const merged = [];
 
-  seed.forEach((seedItem) => {
+  seed.forEach((rawSeedItem) => {
+    const seedItem = normalizeStockDoc(
+      rawSeedItem.id || seedDocId(rawSeedItem),
+      rawSeedItem,
+    );
     const key = seedItem.key || matchKey(seedItem.name);
-    const current = byKey.get(key);
+    const candidates = (candidatesByKey.get(key) || []).filter(
+      (item) => !usedIds.has(item.id),
+    );
 
-    if (!current) {
+    if (!candidates.length) {
       added.push(seedItem);
       merged.push(seedItem);
-      indexById.set(seedItem.id, merged.length - 1);
-      byKey.set(key, seedItem);
       return;
     }
 
+    // If older data has duplicate copies of a medicine, keep the most recently
+    // saved copy. A canonical workbook id wins only when save dates are equal.
+    const canonicalId = seedDocId(seedItem);
+    const current = [...candidates].sort((a, b) => {
+      const dateDifference = timestampFor(b.updatedAt) - timestampFor(a.updatedAt);
+      if (dateDifference) return dateDifference;
+      const canonicalDifference = Number(b.id === canonicalId) - Number(a.id === canonicalId);
+      if (canonicalDifference) return canonicalDifference;
+      return String(a.id).localeCompare(String(b.id));
+    })[0];
+    usedIds.add(current.id);
+
     const patch = {};
-    if (seedItem.name && current.name !== seedItem.name) patch.name = seedItem.name;
-    if (seedItem.section && current.section !== seedItem.section) {
+    const manuallyEdited = new Set(current.adminEditedFields || []);
+    if (
+      seedItem.name &&
+      current.name !== seedItem.name &&
+      !manuallyEdited.has("name")
+    ) {
+      patch.name = seedItem.name;
+      patch.searchName = seedItem.name.toLowerCase();
+    }
+    if (
+      seedItem.section &&
+      current.section !== seedItem.section &&
+      !manuallyEdited.has("section")
+    ) {
       patch.section = seedItem.section;
     }
-    if (current.repeatedlyUsed !== seedItem.repeatedlyUsed) {
+    if (
+      current.repeatedlyUsed !== seedItem.repeatedlyUsed &&
+      !manuallyEdited.has("repeatedlyUsed")
+    ) {
       patch.repeatedlyUsed = seedItem.repeatedlyUsed;
     }
     if (seedItem.sno && current.sno !== seedItem.sno) patch.sno = seedItem.sno;
-    if (!current.key) patch.key = key;
-    if (!Object.keys(patch).length) return;
+    if (current.key !== key) patch.key = key;
 
-    const next = normalizeStockDoc(current.id, { ...current, ...patch });
-    updated.push({ id: current.id, patch, item: next });
-    const i = indexById.get(current.id);
-    if (i !== undefined) merged[i] = next;
+    const item = normalizeStockDoc(current.id, { ...current, ...patch });
+    if (Object.keys(patch).length) {
+      updated.push({ id: current.id, patch, item });
+    }
+    merged.push(item);
   });
 
-  return { merged, added, updated };
+  const excluded = existing.filter((item) => !usedIds.has(item.id));
+  return { merged, added, updated, excluded };
 };
-
 
 export const getMinPositiveQty = (item) => {
   const positives = STOCK_TYPES.map((type) => toQty(item[type.key])).filter(
-    (n) => n > 0,
+    (quantity) => quantity > 0,
   );
   return positives.length ? Math.min(...positives) : 0;
 };
 
 export const getTotalQty = (item) =>
-  STOCK_TYPES.reduce((sum, type) => sum + toQty(item[type.key]), 0);
+  STOCK_TYPES.reduce((total, type) => total + toQty(item[type.key]), 0);
 
-export const getStockStatus = (item, threshold = DEFAULT_LOW_STOCK_THRESHOLD) => {
-  const total = getTotalQty(item);
-  if (total === 0) return "out";
-  const hasLow = STOCK_TYPES.some((type) => {
-    const qty = toQty(item[type.key]);
-    return qty > 0 && qty < threshold;
-  });
-  if (hasLow) return "low";
-  return "ok";
+/**
+ * Stock alerts intentionally apply only to medicines marked "Repeatedly Used = YES".
+ * A medicine is out of stock only when every one of its stock columns is zero.
+ * A value of 1 is still stock and is never labelled "low stock".
+ */
+export const isOutOfStock = (item) =>
+  isRepeatedlyUsedYes(item?.repeatedlyUsed) && getTotalQty(item) === 0;
+
+export const getStockStatus = (item) => {
+  if (!isRepeatedlyUsedYes(item?.repeatedlyUsed)) return "notTracked";
+  return isOutOfStock(item) ? "out" : "inStock";
 };
 
 export const statusMeta = {
-  out: { label: "Out of Stock", className: "bg-red-50 text-red-700 border-red-200" },
-  low: { label: "Low Stock", className: "bg-amber-50 text-amber-700 border-amber-200" },
-  ok: { label: "Available", className: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  out: {
+    label: "Out of Stock",
+    className: "bg-red-50 text-red-700 border-red-200",
+  },
+  inStock: {
+    label: "In Stock",
+    className: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  },
 };
 
-export const qtyTone = (qty, threshold = DEFAULT_LOW_STOCK_THRESHOLD) => {
-  const n = toQty(qty);
-  if (n === 0) return "text-red-600 font-semibold";
-  if (n < threshold) return "text-amber-600 font-semibold";
-  return "text-gray-700";
-};
+/**
+ * Only show a red zero for a repeatedly-used medicine that has no stock in any
+ * column. Other zeroes often mean that a particular potency is not carried.
+ */
+export const qtyTone = (quantity, item) =>
+  toQty(quantity) === 0 && isOutOfStock(item)
+    ? "text-red-600 font-semibold"
+    : "text-gray-700";
 
-export const matchesCondition = (qty, condition, value, value2) => {
-  const n = toQty(qty);
-  const v = Number(value);
-  const v2 = Number(value2);
+export const matchesCondition = (quantity, condition, value, value2) => {
+  const number = toQty(quantity);
+  const firstValue = Number(value);
+  const secondValue = Number(value2);
   switch (condition) {
     case "lt":
-      return Number.isFinite(v) && n < v;
+      return Number.isFinite(firstValue) && number < firstValue;
     case "lte":
-      return Number.isFinite(v) && n <= v;
+      return Number.isFinite(firstValue) && number <= firstValue;
     case "eq":
-      return Number.isFinite(v) && n === v;
+      return Number.isFinite(firstValue) && number === firstValue;
     case "gt":
-      return Number.isFinite(v) && n > v;
+      return Number.isFinite(firstValue) && number > firstValue;
     case "gte":
-      return Number.isFinite(v) && n >= v;
+      return Number.isFinite(firstValue) && number >= firstValue;
     case "between": {
-      if (!Number.isFinite(v) || !Number.isFinite(v2)) return false;
-      const min = Math.min(v, v2);
-      const max = Math.max(v, v2);
-      return n >= min && n <= max;
+      if (!Number.isFinite(firstValue) || !Number.isFinite(secondValue)) return false;
+      const minimum = Math.min(firstValue, secondValue);
+      const maximum = Math.max(firstValue, secondValue);
+      return number >= minimum && number <= maximum;
     }
     case "zero":
-      return n === 0;
+      return number === 0;
     default:
       return true;
   }
@@ -231,58 +293,186 @@ export const itemMatchesStockFilter = (
   value2,
   matchMode = "any",
 ) => {
-  if (!selectedTypes?.length || !condition) return true;
-  const results = selectedTypes.map((key) =>
+  const typeKeys = (selectedTypes || []).filter((key) =>
+    STOCK_TYPE_KEYS.includes(key),
+  );
+  if (!typeKeys.length || !condition) return true;
+  const results = typeKeys.map((key) =>
     matchesCondition(item[key], condition, value, value2),
   );
   return matchMode === "all" ? results.every(Boolean) : results.some(Boolean);
 };
 
+const normaliseSearchText = (value) => String(value || "").trim().toLowerCase();
+const normaliseSearchKey = (value) =>
+  normaliseSearchText(value).replace(/[^a-z0-9]+/g, "");
+
+const SEARCH_FIELD_ALIASES = {
+  name: "name",
+  remedy: "name",
+  medicine: "name",
+  product: "name",
+  section: "section",
+  sec: "section",
+  sno: "sno",
+  serial: "sno",
+  serialnumber: "sno",
+  id: "id",
+  used: "repeatedlyUsed",
+  repeatedlyused: "repeatedlyUsed",
+  repeat: "repeatedlyUsed",
+  status: "status",
+};
+
+STOCK_TYPES.forEach((type) => {
+  [type.key, type.label, type.excel, `pot${type.label}`].forEach((alias) => {
+    SEARCH_FIELD_ALIASES[normaliseSearchKey(alias)] = type.key;
+  });
+});
+
+const splitSearchTerms = (rawSearch) =>
+  String(rawSearch || "")
+    .match(/"[^"]*"|'[^']*'|\S+/g)
+    ?.map((term) => term.replace(/^["']|["']$/g, "").trim())
+    .filter(Boolean) || [];
+
+const statusSearchTerms = (item) => {
+  const status = getStockStatus(item);
+  if (status === "out") return ["out", "out of stock", "zero"];
+  if (status === "inStock") return ["in stock", "instock", "stocked"];
+  return ["not tracked", "not repeatedly used"];
+};
+
+const searchValuesFor = (item, field) => {
+  if (STOCK_TYPE_KEYS.includes(field)) return [String(toQty(item[field]))];
+  switch (field) {
+    case "name":
+      return [item.name, item.searchName];
+    case "section":
+      return [item.section];
+    case "sno":
+      return [String(item.sno)];
+    case "id":
+      return [item.id];
+    case "repeatedlyUsed":
+      return isRepeatedlyUsedYes(item.repeatedlyUsed)
+        ? ["yes", "repeatedly used", "true"]
+        : ["no", "not repeatedly used", "false"];
+    case "status":
+      return statusSearchTerms(item);
+    default:
+      return [];
+  }
+};
+
+const isNumericSearch = (value) => /^\d+(?:\.\d+)?$/.test(value);
+
+const matchesSearchField = (item, field, rawValue) => {
+  const value = normaliseSearchText(rawValue);
+  if (!value) return true;
+
+  if (STOCK_TYPE_KEYS.includes(field)) {
+    const quantity = toQty(item[field]);
+    return isNumericSearch(value)
+      ? quantity === Number(value)
+      : String(quantity).includes(value);
+  }
+
+  if (field === "sno") {
+    return isNumericSearch(value)
+      ? item.sno === Number(value)
+      : String(item.sno).includes(value);
+  }
+
+  if (field === "repeatedlyUsed") {
+    if (["yes", "true", "y"].includes(value)) {
+      return isRepeatedlyUsedYes(item.repeatedlyUsed);
+    }
+    if (["no", "false", "n"].includes(value)) {
+      return !isRepeatedlyUsedYes(item.repeatedlyUsed);
+    }
+  }
+
+  return searchValuesFor(item, field).some((candidate) =>
+    normaliseSearchText(candidate).includes(value),
+  );
+};
+
+const searchableValues = (item) => [
+  ...searchValuesFor(item, "name"),
+  ...searchValuesFor(item, "section"),
+  ...searchValuesFor(item, "sno"),
+  ...searchValuesFor(item, "id"),
+  ...searchValuesFor(item, "repeatedlyUsed"),
+  ...searchValuesFor(item, "status"),
+  ...STOCK_TYPE_KEYS.flatMap((key) => searchValuesFor(item, key)),
+];
+
+/**
+ * Searches every displayed stock column and every row before pagination.
+ * Terms are combined with AND, so "arnica A" finds an Arnica row in section A.
+ * Use column:value for an exact column search, for example `30:1`, `section:A`,
+ * `used:yes`, or `status:out`.
+ */
 export const matchesSearch = (item, rawSearch) => {
-  const search = String(rawSearch || "")
-    .trim()
-    .toLowerCase();
-  if (!search) return true;
-  const haystacks = [
-    item.name,
-    item.searchName,
-    item.section,
-    String(item.sno),
-    item.id,
-    item.repeatedlyUsed,
-  ]
-    .filter(Boolean)
-    .map((v) => String(v).toLowerCase());
-  return haystacks.some((text) => text.includes(search));
+  const terms = splitSearchTerms(rawSearch);
+  if (!terms.length) return true;
+
+  return terms.every((term) => {
+    const separator = term.indexOf(":");
+    if (separator > 0) {
+      const field = SEARCH_FIELD_ALIASES[
+        normaliseSearchKey(term.slice(0, separator))
+      ];
+      if (field) return matchesSearchField(item, field, term.slice(separator + 1));
+    }
+
+    const search = normaliseSearchText(term);
+    return searchableValues(item).some((candidate) =>
+      normaliseSearchText(candidate).includes(search),
+    );
+  });
 };
 
 export const compareStock = (a, b, sortKey, sortDir) => {
-  const dir = sortDir === "desc" ? -1 : 1;
+  const direction = sortDir === "desc" ? -1 : 1;
   if (sortKey === "name") {
-    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) * dir;
+    return (
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) * direction
+    );
   }
   if (sortKey === "section") {
-    return a.section.localeCompare(b.section) * dir || a.sno - b.sno;
+    return a.section.localeCompare(b.section) * direction || a.sno - b.sno;
   }
-  if (sortKey === "sno") return (a.sno - b.sno) * dir;
+  if (sortKey === "sno") return (a.sno - b.sno) * direction;
   if (sortKey === "repeatedlyUsed") {
-    const av = isRepeatedlyUsedYes(a.repeatedlyUsed) ? 1 : 0;
-    const bv = isRepeatedlyUsedYes(b.repeatedlyUsed) ? 1 : 0;
-    return (av - bv) * dir || a.name.localeCompare(b.name);
+    const aValue = isRepeatedlyUsedYes(a.repeatedlyUsed) ? 1 : 0;
+    const bValue = isRepeatedlyUsedYes(b.repeatedlyUsed) ? 1 : 0;
+    return (
+      (aValue - bValue) * direction ||
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+    );
   }
   if (sortKey === "updatedAt") {
-    const av = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-    const bv = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-    return (av - bv) * dir;
+    return (timestampFor(a.updatedAt) - timestampFor(b.updatedAt)) * direction;
   }
   if (sortKey === "lowest") {
-    return (getMinPositiveQty(a) - getMinPositiveQty(b)) * dir || a.name.localeCompare(b.name);
+    return (
+      (getMinPositiveQty(a) - getMinPositiveQty(b)) * direction ||
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+    );
   }
   if (sortKey === "highest" || sortKey === "total") {
-    return (getTotalQty(a) - getTotalQty(b)) * dir || a.name.localeCompare(b.name);
+    return (
+      (getTotalQty(a) - getTotalQty(b)) * direction ||
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+    );
   }
   if (STOCK_TYPE_KEYS.includes(sortKey)) {
-    return (toQty(a[sortKey]) - toQty(b[sortKey])) * dir || a.name.localeCompare(b.name);
+    return (
+      (toQty(a[sortKey]) - toQty(b[sortKey])) * direction ||
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+    );
   }
   return 0;
 };
@@ -300,7 +490,7 @@ export const applyStockQuery = (items, query) => {
     sortDir = "asc",
   } = query || {};
 
-  let next = items.filter((item) => matchesSearch(item, search));
+  let next = (items || []).filter((item) => matchesSearch(item, search));
 
   if (repeatedly === "yes") {
     next = next.filter((item) => isRepeatedlyUsedYes(item.repeatedlyUsed));
@@ -321,15 +511,14 @@ export const applyStockQuery = (items, query) => {
     );
   }
 
-  next = [...next].sort((a, b) => compareStock(a, b, sortKey, sortDir));
-  return next;
+  return [...next].sort((a, b) => compareStock(a, b, sortKey, sortDir));
 };
 
 export const paginateItems = (items, page = 1, pageSize = DEFAULT_PAGE_SIZE) => {
   const size = Math.max(1, Number(pageSize) || DEFAULT_PAGE_SIZE);
   const total = items.length;
   const totalPages = Math.max(1, Math.ceil(total / size));
-  const safePage = Math.min(Math.max(1, page), totalPages);
+  const safePage = Math.min(Math.max(1, Number(page) || 1), totalPages);
   const start = (safePage - 1) * size;
   const end = Math.min(start + size, total);
   return {
@@ -343,21 +532,23 @@ export const paginateItems = (items, page = 1, pageSize = DEFAULT_PAGE_SIZE) => 
   };
 };
 
-export const computeStats = (items, threshold = DEFAULT_LOW_STOCK_THRESHOLD) => {
-  let lowStock = 0;
+export const computeStats = (items = []) => {
   let outOfStock = 0;
   let repeatedlyUsed = 0;
+  let inStock = 0;
+
   items.forEach((item) => {
-    const status = getStockStatus(item, threshold);
-    if (status === "low") lowStock += 1;
-    if (status === "out") outOfStock += 1;
-    if (isRepeatedlyUsedYes(item.repeatedlyUsed)) repeatedlyUsed += 1;
+    if (!isRepeatedlyUsedYes(item.repeatedlyUsed)) return;
+    repeatedlyUsed += 1;
+    if (isOutOfStock(item)) outOfStock += 1;
+    else inStock += 1;
   });
+
   return {
     total: items.length,
-    lowStock,
     outOfStock,
     repeatedlyUsed,
+    inStock,
   };
 };
 
@@ -375,10 +566,10 @@ export const formatDateTime = (value) => {
   });
 };
 
-export const formatChange = (diff) => {
-  const n = Number(diff) || 0;
-  if (n > 0) return `+${n}`;
-  return String(n);
+export const formatChange = (difference) => {
+  const number = Number(difference) || 0;
+  if (number > 0) return `+${number}`;
+  return String(number);
 };
 
 export const stockDocId = (sno) => `sno-${String(sno).padStart(4, "0")}`;
@@ -389,7 +580,7 @@ export const seedDocId = (row) =>
 
 export const sanitizeQuantity = (value) => {
   if (value === "" || value === null || value === undefined) return 0;
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) return null;
-  return Math.floor(n);
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return null;
+  return Math.floor(number);
 };
