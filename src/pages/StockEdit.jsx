@@ -212,20 +212,26 @@ const StockEdit = () => {
             </div>
           </div>
 
-          <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={isRepeatedlyUsedYes(form.repeatedlyUsed)}
-              onChange={(e) =>
-                setForm((prev) => ({
-                  ...prev,
-                  repeatedlyUsed: e.target.checked ? "YES" : "",
-                }))
-              }
-              className="rounded border-gray-300 text-teal-600 focus:ring-teal-500"
-            />
-            Repeatedly Used = YES
-          </label>
+          <div>
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={isRepeatedlyUsedYes(form.repeatedlyUsed)}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    repeatedlyUsed: e.target.checked ? "YES" : "",
+                  }))
+                }
+                className="rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+              />
+              Repeatedly Used = YES
+            </label>
+            <p className="text-xs text-gray-500 mt-1.5">
+              Only medicines marked YES are included in the out-of-stock count. A medicine is
+              out of stock only when every stock column is 0; a value of 1 is still in stock.
+            </p>
+          </div>
 
           <div>
             <h2 className="text-sm font-bold text-gray-800 mb-3">Stock quantities</h2>

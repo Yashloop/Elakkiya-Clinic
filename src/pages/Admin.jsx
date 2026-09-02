@@ -11,6 +11,8 @@ import {
   orderBy,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { fetchAllStock } from "../utils/stockService";
+import { computeStats } from "../utils/stockConstants";
 import {
   Calendar,
   Clock,
@@ -93,6 +95,14 @@ const Admin = () => {
   const [appointments, setAppointments] = useState([]);
   const [slots, setSlots] = useState([]);
   const [reviews, setReviews] = useState([]);
+  const [stockSummary, setStockSummary] = useState({
+    loading: true,
+    total: 0,
+    repeatedlyUsed: 0,
+    inStock: 0,
+    outOfStock: 0,
+    error: "",
+  });
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("appointments");
   const [searchTerm, setSearchTerm] = useState("");
@@ -119,7 +129,12 @@ const Admin = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      await Promise.all([fetchAppointments(), fetchSlots(), fetchReviews()]);
+      await Promise.all([
+        fetchAppointments(),
+        fetchSlots(),
+        fetchReviews(),
+        fetchStockSummary(),
+      ]);
     } catch (err) {
       console.error(err);
     } finally {
@@ -143,6 +158,25 @@ const Admin = () => {
     const q = query(collection(db, "reviews"), orderBy("createdAt", "desc"));
     const snap = await getDocs(q);
     setReviews(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+  };
+
+  const fetchStockSummary = async () => {
+    setStockSummary((previous) => ({ ...previous, loading: true, error: "" }));
+    try {
+      const { items } = await fetchAllStock();
+      setStockSummary({
+        loading: false,
+        error: "",
+        ...computeStats(items),
+      });
+    } catch (stockError) {
+      console.error("Stock summary error:", stockError);
+      setStockSummary((previous) => ({
+        ...previous,
+        loading: false,
+        error: "Stock summary could not be loaded.",
+      }));
+    }
   };
 
   /* ── Appointment actions ── */
@@ -397,6 +431,13 @@ const Admin = () => {
       icon: "✅",
       color: "from-emerald-500 to-teal-500",
     },
+    {
+      label: "Out of Stock",
+      value: stockSummary.loading ? "—" : stockSummary.outOfStock,
+      detail: "Repeatedly used only",
+      icon: "🚫",
+      color: "from-rose-500 to-red-500",
+    },
   ];
 
   /* ── Loading screen ── */
@@ -487,7 +528,7 @@ const Admin = () => {
               </div>
             </div>
 
-            <div className="mt-6 grid grid-cols-3 gap-3">
+            <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               {stats.map((s) => (
                 <div
                   key={s.label}
@@ -497,10 +538,21 @@ const Admin = () => {
                   <p className="text-2xl font-bold text-white mt-1">
                     {s.value}
                   </p>
-                  <p className="text-white/60 text-xs">{s.label}</p>
+                  <p className="text-white/70 text-xs font-semibold">{s.label}</p>
+                  {s.detail && (
+                    <p className="text-white/45 text-[10px] mt-0.5">{s.detail}</p>
+                  )}
                 </div>
               ))}
             </div>
+            <p className="text-white/60 text-xs mt-3">
+              Stock alert rule: only medicines marked Repeatedly Used = YES are counted. A
+              medicine is out of stock only when all of its stock columns are 0; a value of 1 is
+              still in stock.
+            </p>
+            {stockSummary.error && (
+              <p className="text-amber-100 text-xs mt-2">{stockSummary.error}</p>
+            )}
           </div>
 
           <button
@@ -510,7 +562,7 @@ const Admin = () => {
             <div>
               <p className="text-white font-semibold">📦 Stock Details</p>
               <p className="text-white/70 text-sm mt-0.5">
-                Open the stock overview, update quantities, and filter low-stock medicines
+                Search every stock column, update one medicine at a time, and find repeatedly used medicines that are out of stock
               </p>
             </div>
             <span className="hidden sm:inline text-white/80 text-sm font-medium">

@@ -8,7 +8,6 @@ const StockTypeSelector = ({
   title = "Stock Types",
 }) => {
   const allKeys = STOCK_TYPES.map((t) => t.key);
-  const allSelected = selected.length === allKeys.length;
 
   const toggle = (key) => {
     onChange(
