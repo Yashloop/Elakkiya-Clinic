@@ -5,15 +5,16 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCircle,
+  Cloud,
   History,
   Loader,
-  Save,
   X,
 } from "lucide-react";
 import {
   STOCK_TYPES,
-  isRepeatedlyUsedYes,
+  normalizeRepeatedlyUsed,
   sanitizeQuantity,
+  sanitizeSerialNumber,
 } from "../utils/stockConstants";
 import { fetchStockById, updateStockRecord } from "../utils/stockService";
 import QuantityStepper from "../components/stock/QuantityStepper";
@@ -65,11 +66,17 @@ const StockEdit = () => {
   const changedFields = useMemo(() => {
     if (!original || !form) return [];
     const changes = [];
+    if (sanitizeSerialNumber(form.sno) !== original.sno) changes.push("sno");
     if (form.name.trim() !== original.name) changes.push("name");
-    if ((form.section || "") !== (original.section || "")) changes.push("section");
-    const nextUsed = isRepeatedlyUsedYes(form.repeatedlyUsed) ? "YES" : "";
-    const prevUsed = isRepeatedlyUsedYes(original.repeatedlyUsed) ? "YES" : "";
-    if (nextUsed !== prevUsed) changes.push("repeatedlyUsed");
+    if ((form.section || "").trim() !== (original.section || "")) {
+      changes.push("section");
+    }
+    if (
+      normalizeRepeatedlyUsed(form.repeatedlyUsed) !==
+      normalizeRepeatedlyUsed(original.repeatedlyUsed)
+    ) {
+      changes.push("repeatedlyUsed");
+    }
     STOCK_TYPES.forEach((type) => {
       if (Number(form[type.key] || 0) !== Number(original[type.key] || 0)) {
         changes.push(type.key);
@@ -80,6 +87,11 @@ const StockEdit = () => {
 
   const handleSave = async () => {
     if (!form) return;
+    const sno = sanitizeSerialNumber(form.sno);
+    if (sno === null) {
+      showToast("S.No. must be a whole number of 1 or more", "error");
+      return;
+    }
     const name = form.name.trim();
     if (!name) {
       showToast("Product / medicine name is required", "error");
@@ -95,13 +107,15 @@ const StockEdit = () => {
     try {
       const updated = await updateStockRecord(id, {
         ...form,
+        sno,
         name,
-        repeatedlyUsed: isRepeatedlyUsedYes(form.repeatedlyUsed) ? "YES" : "",
+        section: (form.section || "").trim(),
+        repeatedlyUsed: normalizeRepeatedlyUsed(form.repeatedlyUsed),
       });
       navigate("/admin/stock", { state: { updatedItem: updated } });
     } catch (err) {
       console.error(err);
-      showToast(err.message || "Failed to save changes", "error");
+      showToast(err.message || "Failed to save changes to Firebase", "error");
     } finally {
       setSaving(false);
     }
@@ -180,16 +194,35 @@ const StockEdit = () => {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-xs uppercase tracking-wide text-gray-400 font-semibold">
-                Edit Stock · S.No. {form.sno}
+                Edit every stock field · Firebase record
               </p>
               <h1 className="text-2xl font-bold text-gray-900 mt-1">
-                {original.name}
+                {form.name || original.name}
               </h1>
+              <p className="text-xs text-gray-500 mt-1">
+                Change the details, quantities, or repeated-use setting below.
+              </p>
             </div>
             <StockStatusBadge item={form} />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-[140px_minmax(0,1fr)_180px] gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
+                S.No.
+              </label>
+              <input
+                type="number"
+                inputMode="numeric"
+                min="1"
+                step="1"
+                value={form.sno}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, sno: e.target.value }))
+                }
+                className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+              />
+            </div>
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
                 Product / medicine name
@@ -212,29 +245,56 @@ const StockEdit = () => {
             </div>
           </div>
 
-          <div>
-            <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={isRepeatedlyUsedYes(form.repeatedlyUsed)}
-                onChange={(e) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    repeatedlyUsed: e.target.checked ? "YES" : "",
-                  }))
-                }
-                className="rounded border-gray-300 text-teal-600 focus:ring-teal-500"
-              />
-              Repeatedly Used = YES
-            </label>
-            <p className="text-xs text-gray-500 mt-1.5">
-              Only medicines marked YES are included in the out-of-stock count. A medicine is
-              out of stock only when every stock column is 0; a value of 1 is still in stock.
+          <fieldset>
+            <legend className="block text-xs font-semibold text-gray-500 uppercase mb-2">
+              Repeatedly Used
+            </legend>
+            <div className="grid grid-cols-2 gap-2 max-w-sm">
+              {["YES", "NO"].map((choice) => {
+                const selected =
+                  normalizeRepeatedlyUsed(form.repeatedlyUsed) === choice;
+                return (
+                  <label
+                    key={choice}
+                    className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold cursor-pointer transition ${
+                      selected
+                        ? choice === "YES"
+                          ? "border-indigo-300 bg-indigo-50 text-indigo-800"
+                          : "border-gray-400 bg-gray-100 text-gray-800"
+                        : "border-gray-200 bg-white text-gray-500 hover:border-gray-300"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="repeatedlyUsed"
+                      value={choice}
+                      checked={selected}
+                      onChange={() =>
+                        setForm((prev) => ({
+                          ...prev,
+                          repeatedlyUsed: choice,
+                        }))
+                      }
+                      className="text-teal-600 focus:ring-teal-500"
+                    />
+                    {choice}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              Your YES or NO choice is saved explicitly in Firebase. Only YES medicines are
+              included in the out-of-stock count, and only when every stock column is 0.
             </p>
-          </div>
+          </fieldset>
 
           <div>
-            <h2 className="text-sm font-bold text-gray-800 mb-3">Stock quantities</h2>
+            <div className="flex flex-wrap items-end justify-between gap-2 mb-3">
+              <h2 className="text-sm font-bold text-gray-800">All stock quantities</h2>
+              <p className="text-xs text-gray-500">
+                Use the <strong>− &nbsp;number&nbsp; +</strong> control or type a value.
+              </p>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {STOCK_TYPES.map((type) => (
                 <div
@@ -262,18 +322,23 @@ const StockEdit = () => {
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-            <p className="text-xs text-gray-400">
-              {changedFields.length
-                ? `${changedFields.length} field${changedFields.length === 1 ? "" : "s"} changed`
-                : "No changes yet"}
-            </p>
+            <div>
+              <p className="text-xs font-medium text-gray-500">
+                {changedFields.length
+                  ? `${changedFields.length} field${changedFields.length === 1 ? "" : "s"} changed`
+                  : "No changes yet"}
+              </p>
+              <p className="inline-flex items-center gap-1 text-[11px] text-emerald-700 mt-1">
+                <Cloud size={12} /> Saves the record and its history directly to Firebase
+              </p>
+            </div>
             <button
               onClick={handleSave}
               disabled={saving || changedFields.length === 0}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-600 to-blue-600 text-white font-semibold text-sm shadow-md disabled:opacity-50"
             >
-              {saving ? <Loader className="animate-spin" size={16} /> : <Save size={16} />}
-              Save Changes
+              {saving ? <Loader className="animate-spin" size={16} /> : <Cloud size={16} />}
+              {saving ? "Saving to Firebase…" : "Save Changes to Firebase"}
             </button>
           </div>
         </motion.div>

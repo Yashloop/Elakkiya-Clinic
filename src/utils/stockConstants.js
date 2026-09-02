@@ -63,6 +63,10 @@ export const isRepeatedlyUsedYes = (value) =>
     .trim()
     .toUpperCase() === "YES";
 
+/** Firestore stores an explicit YES or NO so an admin's choice is unambiguous. */
+export const normalizeRepeatedlyUsed = (value) =>
+  isRepeatedlyUsedYes(value) ? "YES" : "NO";
+
 export const emptyQuantities = () =>
   STOCK_TYPES.reduce((quantities, type) => {
     quantities[type.key] = 0;
@@ -78,7 +82,7 @@ export const expandSeedRow = (row) => {
     searchName: String(row.name || "")
       .trim()
       .toLowerCase(),
-    repeatedlyUsed: isRepeatedlyUsedYes(row.repeatedlyUsed) ? "YES" : "",
+    repeatedlyUsed: normalizeRepeatedlyUsed(row.repeatedlyUsed),
     ...emptyQuantities(),
   };
   const quantities = row.qty || {};
@@ -97,12 +101,12 @@ export const normalizeStockDoc = (id, data = {}) => {
     section: data.section || "",
     name,
     searchName: (data.searchName || name).toString().trim().toLowerCase(),
-    repeatedlyUsed: isRepeatedlyUsedYes(data.repeatedlyUsed) ? "YES" : "",
+    repeatedlyUsed: normalizeRepeatedlyUsed(data.repeatedlyUsed),
     // Fields deliberately changed through the stock editor take precedence over
     // workbook metadata on future refreshes, so a saved edit remains searchable.
     adminEditedFields: Array.isArray(data.adminEditedFields)
       ? data.adminEditedFields.filter((field) =>
-          ["name", "section", "repeatedlyUsed"].includes(field),
+          ["sno", "name", "section", "repeatedlyUsed"].includes(field),
         )
       : [],
     updatedAt: data.updatedAt || "",
@@ -200,7 +204,13 @@ export const mergeSeedRows = (seed = [], existing = []) => {
     ) {
       patch.repeatedlyUsed = seedItem.repeatedlyUsed;
     }
-    if (seedItem.sno && current.sno !== seedItem.sno) patch.sno = seedItem.sno;
+    if (
+      seedItem.sno &&
+      current.sno !== seedItem.sno &&
+      !manuallyEdited.has("sno")
+    ) {
+      patch.sno = seedItem.sno;
+    }
     if (current.key !== key) patch.key = key;
 
     const item = normalizeStockDoc(current.id, { ...current, ...patch });
@@ -583,4 +593,13 @@ export const sanitizeQuantity = (value) => {
   const number = Number(value);
   if (!Number.isFinite(number) || number < 0) return null;
   return Math.floor(number);
+};
+
+export const sanitizeSerialNumber = (value) => {
+  if (value === "" || value === null || value === undefined) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 1 || !Number.isInteger(number)) {
+    return null;
+  }
+  return number;
 };

@@ -102,13 +102,15 @@ const StockTable = ({
                     </td>
                   ))}
                   <td className="px-3 py-3">
-                    {repeatedlyUsed ? (
-                      <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        YES
-                      </span>
-                    ) : (
-                      <span className="text-gray-300 text-xs">—</span>
-                    )}
+                    <span
+                      className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
+                        repeatedlyUsed
+                          ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                          : "bg-gray-50 text-gray-600 border-gray-200"
+                      }`}
+                    >
+                      {repeatedlyUsed ? "YES" : "NO"}
+                    </span>
                   </td>
                   <td className="px-3 py-3">
                     {repeatedlyUsed ? (
@@ -192,13 +194,13 @@ const StockTable = ({
                 )}
               </div>
               <div className="flex items-center justify-between">
-                {repeatedlyUsed ? (
-                  <span className="text-[11px] font-semibold text-indigo-700">
-                    Repeatedly Used
-                  </span>
-                ) : (
-                  <span />
-                )}
+                <span
+                  className={`text-[11px] font-semibold ${
+                    repeatedlyUsed ? "text-indigo-700" : "text-gray-500"
+                  }`}
+                >
+                  Repeatedly Used: {repeatedlyUsed ? "YES" : "NO"}
+                </span>
                 <div className="flex gap-2">
                   <button
                     type="button"
